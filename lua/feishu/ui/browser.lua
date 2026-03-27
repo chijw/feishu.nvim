@@ -397,6 +397,29 @@ local function help_items(state)
   return items
 end
 
+local function non_empty(...)
+  for _, value in ipairs({ ... }) do
+    if type(value) == 'string' and vim.trim(value) ~= '' then
+      return value
+    end
+  end
+  return nil
+end
+
+local function resource_name(title, token, url)
+  local name = non_empty(title, token)
+  if name then
+    return name
+  end
+  if type(url) == 'string' and url ~= '' then
+    local tail = url:match('/([^/?#]+)$')
+    if tail and tail ~= '' then
+      return tail
+    end
+  end
+  return '<doc>'
+end
+
 local function build_docs_home_entries(state, items)
   local recent_count = #(state.app.session.recent_docs or {})
   local entries = {
@@ -423,13 +446,15 @@ local function build_docs_home_entries(state, items)
   }
 
   for _, item in ipairs(items or {}) do
+    local token = item.DocsToken or item.docs_token
+    local url = item.URL or item.url
     entries[#entries + 1] = {
       kind = 'search_doc',
-      name = item.Title or item.title or item.DocsToken or '<doc>',
-      token = item.DocsToken or item.docs_token,
+      name = resource_name(non_empty(item.Title, item.title), token, url),
+      token = token,
       type = item.DocsType or item.docs_type or 'file',
       owner_id = item.OwnerID or item.owner_id,
-      url = item.URL or item.url,
+      url = url,
       source = 'docs_home',
     }
   end
@@ -480,13 +505,15 @@ end
 local function build_search_entries(items)
   local entries = {}
   for _, item in ipairs(items or {}) do
+    local token = item.DocsToken or item.docs_token
+    local url = item.URL or item.url
     entries[#entries + 1] = {
       kind = 'search_doc',
-      name = item.Title or item.title or item.DocsToken or '<doc>',
-      token = item.DocsToken or item.docs_token,
+      name = resource_name(non_empty(item.Title, item.title), token, url),
+      token = token,
       type = item.DocsType or item.docs_type or 'file',
       owner_id = item.OwnerID or item.owner_id,
-      url = item.URL or item.url,
+      url = url,
       source = 'search',
     }
   end
