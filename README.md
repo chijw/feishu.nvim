@@ -8,30 +8,12 @@
 
 ## 特性
 
-- 云文档浏览器
-  - 根页面只有两个入口：`云文档` 和 `消息`
-  - 支持知识库、云盘、最近打开、搜索结果等通用资源浏览
-- 多维表格原生视图
-  - 根据 schema 动态渲染列，不写死字段名
-  - 支持横向滚动、切换 table、按字段分组、记录预览
-  - 支持新增、编辑、删除记录
-  - 单选、多选、负责人、布尔、关联记录等字段会走 picker，不要求手输
-  - 表单里支持引用云文档、打开 hyperlink、异步保存
-- 文档本地缓存
-  - `docx` / 可导出的 wiki 文档会落到本地 Markdown 缓存
-  - `:w` 保存后异步同步回飞书
-  - 继续保留正常的 Vim 编辑、搜索、宏、buffer 管理能力
-- 消息视图
-  - 浏览 chat 列表
-  - 预览历史消息
-  - 用独立 compose buffer 写消息并通过 `:w` 发送
-- 资源 fallback
-  - `sheet` 会打开只读预览
-  - `slides` / `mindnote` / 普通文件等暂不原生编辑的资源，会打开 metadata buffer
-  - 普通文件支持下载到本地缓存后继续用本地工具打开
-- 全部请求走外部 backend
-  - 插件本身不维护一套独立的飞书 HTTP 客户端
-  - 当前支持的 backend 是 [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli)
+- 在 Neovim 里浏览飞书云文档、知识库、云盘、搜索结果和最近打开内容。
+- 用一个通用的 bitable 视图读写多维表格，支持分组、picker 和链接跳转。
+- 把 `docx` / 可导出的 wiki 文档映射成 Markdown buffer，并在 `:w` 后异步同步回飞书。
+- 浏览聊天、预览历史消息，并在独立 compose buffer 里发送消息。
+- 为 `sheet`、普通文件和暂未原生支持的资源提供 preview / metadata / 下载 fallback。
+- 所有后端能力统一委托给 [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli)，插件本身不重复实现一套飞书 API 客户端。
 
 ## 依赖
 

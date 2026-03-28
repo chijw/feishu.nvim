@@ -8,30 +8,12 @@ A Neovim frontend for Feishu resources, with all backend operations delegated to
 
 ## Features
 
-- Cloud document browser
-  - the root page has only two entries: `Docs` and `Chats`
-  - supports generic browsing across wiki spaces, drive folders, recent items, and search results
-- Generic bitable view
-  - columns are rendered dynamically from schema instead of hardcoded field names
-  - supports horizontal scrolling, table switching, grouping, and record preview
-  - supports create, edit, and delete for records
-  - single-select, multi-select, user, checkbox, and link-style fields use pickers instead of raw manual input
-  - record forms support doc citation, hyperlink opening, and async save
-- Local document cache
-  - `docx` and exportable wiki docs are materialized as local Markdown
-  - `:w` writes the local file and asynchronously syncs it back to Feishu
-  - normal Vim editing, search, macros, and buffer management remain intact
-- Chat view
-  - browse chat lists
-  - preview recent history
-  - write messages in a separate compose buffer and send them with `:w`
-- Resource fallbacks
-  - `sheet` opens as a read-only preview
-  - `slides`, `mindnote`, and generic files open in metadata-oriented fallback buffers
-  - generic files can be downloaded into a local cache before being opened locally
-- External backend only
-  - the plugin does not maintain a separate Feishu HTTP client in Lua
-  - the supported backend is [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli)
+- Browse Feishu docs, wiki spaces, drive folders, search results, and recent items directly inside Neovim.
+- Work with bitable boards through a generic schema-driven view with grouping, pickers, and link navigation.
+- Open `docx` and exportable wiki docs as Markdown buffers and sync them back to Feishu asynchronously on `:w`.
+- Browse chats, preview recent history, and send messages from a dedicated compose buffer.
+- Use preview / metadata / download fallbacks for `sheet`, generic files, and resource types without native views yet.
+- Delegate all backend work to [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli) instead of re-implementing a separate Feishu API client in Lua.
 
 ## Requirements
 
