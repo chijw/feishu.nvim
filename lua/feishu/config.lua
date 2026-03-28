@@ -2,7 +2,6 @@ local M = {}
 
 M.defaults = {
   workspace = vim.fn.getcwd(),
-  cmd = nil,
   tenant_host = nil,
   task_base_url = nil,
   task_defaults = {},

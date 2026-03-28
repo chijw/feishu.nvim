@@ -13,27 +13,12 @@ local function resolve_command(spec, fallback)
   return fallback()
 end
 
-local function workspace_command_base(opts)
-  return resolve_command(opts.workspace_cmd or opts.external_cmd or opts.cmd, function()
+local function external_command_base(opts)
+  return resolve_command(opts.external_cmd, function()
     if vim.fn.executable('feishu-cli') == 1 then
       return { 'feishu-cli' }
-    end
-    if vim.fn.executable('feishu') == 1 then
-      return { 'feishu' }
-    end
-    if vim.fn.executable('python3') == 1 then
-      return { 'python3', '-m', 'feishu_cli' }
     end
     error('Cannot find `feishu-cli` in PATH.')
-  end)
-end
-
-local function external_command_base(opts)
-  return resolve_command(opts.external_cmd or opts.cmd, function()
-    if vim.fn.executable('feishu-cli') == 1 then
-      return { 'feishu-cli' }
-    end
-    return workspace_command_base(opts)
   end)
 end
 

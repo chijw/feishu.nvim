@@ -1,6 +1,6 @@
 # feishu.nvim
 
-Native Neovim frontend for Feishu resources, with `feishu-cli` as the primary backend.
+Native Neovim frontend for Feishu resources, with `feishu-cli` as the backend.
 
 ## Goals
 
@@ -50,7 +50,7 @@ The local config already wires it through `lazy.nvim`:
 ## Notes
 
 - The plugin intentionally shells out to CLIs instead of duplicating HTTP logic in Lua.
-- General browsing, chat, and bitable operations now use external `feishu-cli`.
+- The plugin now uses `feishu-cli` as its only backend.
 - Bitable URLs can be opened either from direct `/base/...` links or from wiki nodes that resolve to bitable resources.
 - Chat listing and history require real `im:*` user scopes on the `feishu-cli` token.
 - Search and chat commands rely on `feishu-cli`'s own user-token resolution path, so token refresh stays in the CLI instead of the plugin.
