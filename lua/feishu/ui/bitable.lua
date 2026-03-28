@@ -7,6 +7,7 @@ local ns = vim.api.nvim_create_namespace('feishu.bitable')
 local states = {}
 local form_states = {}
 local open_current_link
+local open_link_target
 
 local UI_TYPE_WIDTHS = {
   Text = { min = 10, max = 32 },
@@ -85,6 +86,29 @@ local function extract_date(value)
     return os.date('%Y-%m-%d %H:%M', math.floor(value / 1000))
   end
   return tostring(value)
+end
+
+local function extract_text_link(raw)
+  if type(raw) ~= 'string' then
+    return nil
+  end
+
+  local label, url = raw:match('%[([^%]]+)%]%((https?://[^%s)]+)%)')
+  if url and url ~= '' then
+    return {
+      label = label,
+      url = url,
+    }
+  end
+
+  local direct = raw:match('(https?://[^%s%]%)}>,]+)')
+  if direct and direct ~= '' then
+    return {
+      label = direct,
+      url = direct,
+    }
+  end
+  return nil
 end
 
 local function extract_link_record_ids(value)
@@ -443,6 +467,7 @@ local function configure_preview(state)
   util.attach_help(state.preview_buf, function()
     local items = {
       { '<S-Tab>', '切换当前 base 内的 table' },
+      { 'gr', '选择当前表的分组字段' },
       { 'h / l', '横向切换可见列' },
       { 'J / K', '快速上下移动' },
       { '<CR>', '重新打开右侧详情预览' },
@@ -474,11 +499,14 @@ local function configure_preview(state)
   end, { buffer = state.preview_buf, silent = true, nowait = true, desc = 'Go to Feishu link under cursor' })
 end
 
-local function ensure_preview_window(state)
+local function ensure_preview_window(state, force)
   if state.preview_win and vim.api.nvim_win_is_valid(state.preview_win)
       and state.preview_buf and vim.api.nvim_buf_is_valid(state.preview_buf) then
     configure_preview(state)
     return true
+  end
+  if not force and state.preview_enabled == false then
+    return false
   end
   if not state.list_win or not vim.api.nvim_win_is_valid(state.list_win) then
     return false
@@ -492,13 +520,18 @@ local function ensure_preview_window(state)
   end
   configure_preview(state)
 
+  state.preview_enabled = true
   vim.api.nvim_set_current_win(state.list_win)
   return true
 end
 
-local function collapse_preview_window(state)
+local function collapse_preview_window(state, opts)
+  opts = opts or {}
   util.close_window(state.preview_win)
   state.preview_win = nil
+  if opts.disable then
+    state.preview_enabled = false
+  end
 end
 
 local function record_label_from_fields(fields, primary_field_name, record_id)
@@ -536,7 +569,51 @@ local function build_users(records, fields)
   return users
 end
 
-local function build_rows(records, primary_field_name, parent_field_name)
+local function groupable_field(field)
+  local ui_type = tostring(field and field.ui_type or '')
+  return ui_type == 'User'
+      or ui_type == 'SingleSelect'
+      or ui_type == 'MultiSelect'
+      or ui_type == 'Checkbox'
+end
+
+local function group_labels_for_value(field, value)
+  local ui_type = tostring(field and field.ui_type or '')
+  if ui_type == 'User' then
+    return extract_people(value)
+  end
+  if ui_type == 'SingleSelect' then
+    local rendered = extract_text(value)
+    return rendered ~= '' and { rendered } or {}
+  end
+  if ui_type == 'MultiSelect' then
+    local labels = {}
+    if type(value) == 'table' then
+      for _, item in ipairs(value) do
+        local rendered = extract_text(item)
+        if rendered ~= '' then
+          labels[#labels + 1] = rendered
+        end
+      end
+    else
+      for _, item in ipairs(split_csv(tostring(value or ''))) do
+        labels[#labels + 1] = item
+      end
+    end
+    return labels
+  end
+  if ui_type == 'Checkbox' then
+    if value == true then
+      return { 'true' }
+    end
+    if value == false then
+      return { 'false' }
+    end
+  end
+  return {}
+end
+
+local function build_rows(records, primary_field_name, parent_field_name, group_field)
   local record_by_id = {}
   local order = {}
   for _, record in ipairs(records or {}) do
@@ -572,7 +649,7 @@ local function build_rows(records, primary_field_name, parent_field_name)
     end
   end
 
-  local rows = {}
+  local tree_rows = {}
   local function collect(record_id, depth, current_group, trail)
     local record = record_by_id[record_id]
     if not record or trail[record_id] then
@@ -580,7 +657,8 @@ local function build_rows(records, primary_field_name, parent_field_name)
     end
 
     local group = current_group or record
-    rows[#rows + 1] = {
+    tree_rows[#tree_rows + 1] = {
+      kind = 'record',
       record = record,
       depth = depth,
       group_record_id = group.record_id,
@@ -599,7 +677,54 @@ local function build_rows(records, primary_field_name, parent_field_name)
     collect(record_id, 0, nil, {})
   end
 
-  return rows, record_by_id, children_by_parent
+  if not group_field or not group_field.field_name then
+    return tree_rows, record_by_id, children_by_parent
+  end
+
+  local grouped = {}
+  local group_order = {}
+  for _, row in ipairs(tree_rows) do
+    local labels = group_labels_for_value(group_field, row.record.fields[group_field.field_name])
+    if #labels == 0 then
+      labels = { '(空)' }
+    end
+    local seen_labels = {}
+    for _, label in ipairs(labels) do
+      if not seen_labels[label] then
+        seen_labels[label] = true
+        if not grouped[label] then
+          grouped[label] = {}
+          group_order[#group_order + 1] = label
+        end
+        local item = vim.deepcopy(row)
+        item.depth = row.depth + 1
+        item.group_label = label
+        item.group_field_name = group_field.field_name
+        item.group_values = label == '(空)' and {} or { label }
+        item.is_group = false
+        grouped[label][#grouped[label] + 1] = item
+      end
+    end
+  end
+
+  local grouped_rows = {}
+  for _, label in ipairs(group_order) do
+    grouped_rows[#grouped_rows + 1] = {
+      kind = 'group_header',
+      record = nil,
+      depth = 0,
+      is_group = true,
+      group_label = label,
+      group_values = label == '(空)' and {} or { label },
+      group_field_name = group_field.field_name,
+      group_size = #grouped[label],
+    }
+    for _, row in ipairs(grouped[label]) do
+      grouped_rows[#grouped_rows + 1] = row
+    end
+  end
+
+  return grouped_rows, record_by_id, children_by_parent
 end
 
 local function descendant_ids(children_by_parent, record_id)
@@ -632,9 +757,9 @@ local function build_link_maps(state, exclude_record_id)
     end
   end
 
-  for _, row in ipairs(state.rows) do
-    local record = row.record
-    if not excluded[record.record_id] then
+  for _, raw in ipairs(state.records or {}) do
+    local record = state.record_by_id[tostring(raw.record_id or '')]
+    if record and not excluded[record.record_id] then
       local label = record.label ~= '' and record.label or record.record_id
       if used_labels[label] then
         label = ('%s :: %s'):format(label, record.record_id)
@@ -646,6 +771,28 @@ local function build_link_maps(state, exclude_record_id)
   end
 
   return label_to_id, id_to_label
+end
+
+local function active_group_field(state)
+  if not state.group_field_name or state.group_field_name == '' then
+    return nil
+  end
+  for _, field in ipairs(state.schema_fields or {}) do
+    if field.field_name == state.group_field_name and groupable_field(field) then
+      return field
+    end
+  end
+  return nil
+end
+
+local function rebuild_rows(state)
+  local group_field = active_group_field(state)
+  if state.group_field_name and not group_field then
+    state.group_field_name = nil
+    group_field = nil
+  end
+  state.rows, state.record_by_id, state.children_by_parent =
+    build_rows(state.records, state.primary_field_name, state.parent_field_name, group_field)
 end
 
 local function field_value_display(state, field, value)
@@ -674,13 +821,29 @@ end
 
 local function row_values(state, row)
   local values = {}
+  if row.kind == 'group_header' then
+    for _, field in ipairs(preferred_fields(state.schema_fields)) do
+      local key = tostring(field.field_id or field.field_name)
+      if field.is_primary then
+        values[key] = ('[GROUP] %s: %s'):format(row.group_field_name or '分组', row.group_label or '(空)')
+      else
+        values[key] = ''
+      end
+    end
+    return values
+  end
+
   local raw_fields = row.record.fields
   for _, field in ipairs(preferred_fields(state.schema_fields)) do
     local key = tostring(field.field_id or field.field_name)
     local rendered = field_value_to_string(state, field, raw_fields[field.field_name])
     if field.is_primary then
       local marker = row.is_group and '+ ' or '- '
-      rendered = string.rep('  ', row.depth) .. marker .. (rendered ~= '' and rendered or row.record.record_id)
+      local depth = row.depth
+      if state.group_field_name then
+        depth = math.max(0, depth - 1)
+      end
+      rendered = string.rep('  ', depth) .. marker .. (rendered ~= '' and rendered or row.record.record_id)
     end
     values[key] = rendered
   end
@@ -688,11 +851,11 @@ local function row_values(state, row)
 end
 
 local function selected_parent_record_id(state)
-  if not state.parent_field_name then
+  if state.group_field_name or not state.parent_field_name then
     return nil
   end
   local row = current_row(state)
-  if not row then
+  if not row or not row.record then
     return nil
   end
   if row.is_group then
@@ -701,10 +864,70 @@ local function selected_parent_record_id(state)
   return row.group_record_id or row.record.parent_record_ids[1]
 end
 
-local function build_form_lines(state, record, parent_record_id)
+local function field_group_defaults(row)
+  if not row or not row.group_field_name or not row.group_values or #row.group_values == 0 then
+    return {}
+  end
+  return {
+    [row.group_field_name] = table.concat(row.group_values, ', '),
+  }
+end
+
+local function current_group_defaults(state)
+  return field_group_defaults(current_row(state))
+end
+
+local function open_group_picker(state)
+  local items = {
+    {
+      label = '(不分组)',
+      value = '',
+      selected = not state.group_field_name or state.group_field_name == '',
+    },
+  }
+
+  for _, field in ipairs(preferred_fields(state.schema_fields)) do
+    if groupable_field(field) and field.field_name then
+      items[#items + 1] = {
+        label = ('%s  [%s]'):format(field.field_name, tostring(field.ui_type or 'field')),
+        value = tostring(field.field_name),
+        selected = state.group_field_name == field.field_name,
+      }
+    end
+  end
+
+  if #items == 1 then
+    vim.notify('当前表没有可用于分组的字段。', vim.log.levels.INFO)
+    return
+  end
+
+  picker.open({
+    title = '按字段分组',
+    items = items,
+    multiple = false,
+    on_confirm = function(values)
+      local next_group = values[1]
+      state.group_field_name = (type(next_group) == 'string' and next_group ~= '') and next_group or nil
+      rebuild_rows(state)
+      state.error = nil
+      if state.group_field_name then
+        state.status = ('已按 %s 分组。'):format(state.group_field_name)
+      else
+        state.status = '已取消分组。'
+      end
+      render(state)
+    end,
+  })
+end
+
+local function build_form_lines(state, record, parent_record_id, default_values)
+  default_values = default_values or {}
   local values = {}
   for _, field in ipairs(state.editable_fields) do
     values[field.field_name] = record and field_value_to_string(state, field, record.fields[field.field_name]) or ''
+    if values[field.field_name] == '' and default_values[field.field_name] ~= nil then
+      values[field.field_name] = tostring(default_values[field.field_name])
+    end
   end
 
   if state.parent_field_name and parent_record_id and values[state.parent_field_name] == '' then
@@ -920,6 +1143,7 @@ local function form_help_items()
   return {
     { '<CR>', '编辑当前字段' },
     { 'i / I / a / A', '编辑当前字段；选项字段打开 picker' },
+    { 'gd / o', '打开当前字段里的首个链接' },
     { ':w', '保存当前记录' },
     { ':wq', '保存并关闭当前窗口' },
     { ':q', '关闭当前窗口' },
@@ -957,7 +1181,7 @@ local function build_fields_from_form(state, form, opts)
     if raw == '' then
       if ui_type == 'SingleLink' or ui_type == 'DuplexLink' then
         if for_update then
-          fields[field_name] = {}
+          fields[field_name] = vim.NIL
         end
       elseif for_update then
         fields[field_name] = vim.NIL
@@ -1045,6 +1269,23 @@ local function render_preview(state)
       '',
       '移动到一条记录上查看字段。',
     })
+    return
+  end
+
+  if row.kind == 'group_header' then
+    state.preview_line_links = {}
+    util.set_lines(state.preview_buf, {
+      row.group_label or '(空)',
+      '',
+      ('group field: %s'):format(row.group_field_name or '<field>'),
+      ('records: %d'):format(tonumber(row.group_size or 0) or 0),
+      '',
+      '按 a / A 可以直接在当前分组下新建记录。',
+    })
+    vim.api.nvim_buf_clear_namespace(state.preview_buf, ns, 0, -1)
+    vim.api.nvim_buf_add_highlight(state.preview_buf, ns, 'Title', 0, 0, -1)
+    vim.api.nvim_buf_add_highlight(state.preview_buf, ns, 'Comment', 2, 0, -1)
+    vim.api.nvim_buf_add_highlight(state.preview_buf, ns, 'Comment', 3, 0, -1)
     return
   end
 
@@ -1136,11 +1377,20 @@ local function move_cursor_to_record(state, record_id)
     return
   end
   for line, row in pairs(state.line_to_row) do
-    if row.record.record_id == record_id and vim.api.nvim_win_is_valid(state.list_win) then
+    if row.record and row.record.record_id == record_id and vim.api.nvim_win_is_valid(state.list_win) then
       pcall(vim.api.nvim_win_set_cursor, state.list_win, { line, 0 })
       return
     end
   end
+end
+
+local function first_row_record_id(state)
+  for _, row in ipairs(state.rows or {}) do
+    if row.record and row.record.record_id then
+      return row.record.record_id
+    end
+  end
+  return nil
 end
 
 local function render(state)
@@ -1165,9 +1415,16 @@ local function render(state)
     end
   end
 
+  local meta_parts = {
+    ('table %d/%d'):format(active_index > 0 and active_index or 1, math.max(1, #state.tables)),
+  }
+  if state.group_field_name and state.group_field_name ~= '' then
+    meta_parts[#meta_parts + 1] = ('group: %s'):format(state.group_field_name)
+  end
+
   local lines = {
     ('飞书多维表格  [%s]'):format(state.active_table_name or state.active_table_id or '<table>'),
-    ('table %d/%d'):format(active_index > 0 and active_index or 1, math.max(1, #state.tables)),
+    table.concat(meta_parts, '  |  '),
     state.error and ('错误: ' .. (state.error.message or 'request failed')) or (state.status or ''),
     '',
     nil,
@@ -1202,7 +1459,7 @@ local function render(state)
   end
 
   if #state.rows > 0 then
-    move_cursor_to_record(state, selected_record_id or state.rows[1].record.record_id)
+    move_cursor_to_record(state, selected_record_id or first_row_record_id(state))
   end
   local record = current_record(state)
   state.last_selected_record_id = record and record.record_id or state.last_selected_record_id
@@ -1212,6 +1469,7 @@ end
 local function help_items(state)
   local items = {
     { '<S-Tab>', '切换当前 base 内的 table' },
+    { 'gr', '选择当前表的分组字段' },
     { 'h / l', '横向切换可见列' },
     { 'J / K', '快速上下移动' },
     { '<CR>', '重新打开右侧详情预览' },
@@ -1363,6 +1621,20 @@ local function extract_saved_record_id(payload, fallback)
   return nil
 end
 
+local function open_form_current_link(form_state)
+  if not vim.api.nvim_win_is_valid(form_state.winid) then
+    return
+  end
+  local line = vim.api.nvim_win_get_cursor(form_state.winid)[1]
+  local raw = vim.api.nvim_buf_get_lines(form_state.bufnr, line - 1, line, false)[1] or ''
+  local link = extract_text_link(raw)
+  if not link then
+    vim.notify('当前字段里没有可打开的链接。', vim.log.levels.WARN)
+    return
+  end
+  open_link_target(form_state.parent_state, link)
+end
+
 local function save_form(form_state, opts)
   opts = opts or {}
   if form_state.pending then
@@ -1426,16 +1698,18 @@ local function save_form(form_state, opts)
     end
   end
 
-  if form_state.record_id then
-    form_state.parent_state.app.backend:record_update(current_base_url(form_state.parent_state), form_state.record_id, fields, callback)
-  else
-    form_state.parent_state.app.backend:record_add(current_base_url(form_state.parent_state), fields, callback)
-  end
+  vim.schedule(function()
+    if form_state.record_id then
+      form_state.parent_state.app.backend:record_update(current_base_url(form_state.parent_state), form_state.record_id, fields, callback)
+    else
+      form_state.parent_state.app.backend:record_add(current_base_url(form_state.parent_state), fields, callback)
+    end
+  end)
 
   return true
 end
 
-local function open_form(state, record, parent_record_id)
+local function open_form(state, record, parent_record_id, default_values)
   vim.cmd('botright split')
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_height(win, math.max(8, math.floor(vim.o.lines * (state.app.opts.ui.form_height or 0.4))))
@@ -1444,7 +1718,7 @@ local function open_form(state, record, parent_record_id)
   vim.api.nvim_win_set_buf(win, buf)
   vim.wo[win].wrap = false
 
-  util.set_lines(buf, build_form_lines(state, record, parent_record_id), { modifiable = true })
+  util.set_lines(buf, build_form_lines(state, record, parent_record_id, default_values), { modifiable = true })
   vim.bo[buf].modifiable = true
   vim.bo[buf].readonly = false
 
@@ -1485,6 +1759,12 @@ local function open_form(state, record, parent_record_id)
   map('A', function()
     edit_current_form_field(form_state)
   end, 'Edit current field')
+  map('gd', function()
+    open_form_current_link(form_state)
+  end, 'Open current field link')
+  map('o', function()
+    open_form_current_link(form_state)
+  end, 'Open current field link')
 
   util.attach_help(buf, {
     title = '记录编辑',
@@ -1561,7 +1841,7 @@ local function first_record_link(state)
   return links[1]
 end
 
-local function open_link_target(state, link)
+open_link_target = function(state, link)
   if not link or type(link.url) ~= 'string' or link.url == '' then
     vim.notify('当前记录里没有可打开的链接。', vim.log.levels.WARN)
     return
@@ -1657,10 +1937,10 @@ local function on_cursor_moved(buf)
     return
   end
   local row = current_row(state)
-  if row then
+  if row and row.record then
     state.last_selected_record_id = row.record.record_id
-    render_preview(state)
   end
+  render_preview(state)
 end
 
 function M.refresh_current()
@@ -1733,6 +2013,7 @@ function M.open(app, opts)
     status = '正在加载...',
     error = nil,
     last_selected_record_id = nil,
+    preview_enabled = true,
   }
   states[list_buf] = state
   configure_preview(state)
@@ -1770,16 +2051,20 @@ function M.open(app, opts)
     }
   end)
   map('<CR>', function()
+    state.preview_enabled = true
     render_preview(state)
   end, 'Restore detail preview')
   map('<S-Tab>', function()
     cycle_table(state)
   end, 'Cycle tables')
+  map('gr', function()
+    open_group_picker(state)
+  end, 'Select group field')
   map('a', function()
-    open_form(state, nil, selected_parent_record_id(state))
+    open_form(state, nil, selected_parent_record_id(state), current_group_defaults(state))
   end, 'Add record')
   map('A', function()
-    open_form(state, nil, nil)
+    open_form(state, nil, nil, current_group_defaults(state))
   end, 'Add root record')
   map('i', function()
     local record = current_record(state)
@@ -1807,7 +2092,7 @@ function M.open(app, opts)
     buffer = list_buf,
     callback = function()
       state.list_win = vim.api.nvim_get_current_win()
-      ensure_preview_window(state)
+      ensure_preview_window(state, false)
       render(state)
     end,
   })
@@ -1825,8 +2110,33 @@ function M.open(app, opts)
         if util.buffer_visible(list_buf) then
           return
         end
-        collapse_preview_window(state)
+        collapse_preview_window(state, { disable = true })
       end)
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufWinLeave', {
+    group = group,
+    buffer = preview_buf,
+    callback = function()
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(preview_buf) then
+          return
+        end
+        if util.buffer_visible(preview_buf) then
+          return
+        end
+        state.preview_win = nil
+        state.preview_enabled = false
+      end)
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufEnter', {
+    group = group,
+    buffer = preview_buf,
+    callback = function()
+      if vim.api.nvim_get_current_win() ~= state.list_win then
+        state.preview_win = vim.api.nvim_get_current_win()
+      end
     end,
   })
   vim.api.nvim_create_autocmd('BufWipeout', {
@@ -1834,7 +2144,7 @@ function M.open(app, opts)
     buffer = list_buf,
     callback = function()
       states[list_buf] = nil
-      collapse_preview_window(state)
+      collapse_preview_window(state, { disable = true })
       util.close_buffer(state.preview_buf)
     end,
   })

@@ -75,10 +75,13 @@ local function visible_chats(state)
   return items
 end
 
-local function ensure_preview_window(state)
+local function ensure_preview_window(state, force)
   if state.preview_win and vim.api.nvim_win_is_valid(state.preview_win)
       and state.preview_buf and vim.api.nvim_buf_is_valid(state.preview_buf) then
     return true
+  end
+  if not force and state.preview_enabled == false then
+    return false
   end
   if not state.list_win or not vim.api.nvim_win_is_valid(state.list_win) then
     return false
@@ -121,13 +124,18 @@ local function ensure_preview_window(state)
     }
   end)
 
+  state.preview_enabled = true
   vim.api.nvim_set_current_win(state.list_win)
   return true
 end
 
-local function collapse_preview_window(state)
+local function collapse_preview_window(state, opts)
+  opts = opts or {}
   util.close_window(state.preview_win)
   state.preview_win = nil
+  if opts.disable then
+    state.preview_enabled = false
+  end
 end
 
 local function render_preview(state)
@@ -390,8 +398,7 @@ local function reset_compose_buffer(compose_state)
   end
 end
 
-local function save_compose(compose_state, opts)
-  opts = opts or {}
+local function save_compose(compose_state)
   if compose_state.pending then
     return false
   end
@@ -409,49 +416,53 @@ local function save_compose(compose_state, opts)
   end
 
   compose_state.pending = true
-  vim.bo[compose_state.bufnr].modifiable = false
-  vim.bo[compose_state.bufnr].readonly = true
+  local buf_valid = vim.api.nvim_buf_is_valid(compose_state.bufnr)
+  local save_tick = buf_valid and vim.api.nvim_buf_get_changedtick(compose_state.bufnr) or nil
+  if buf_valid then
+    vim.bo[compose_state.bufnr].modifiable = false
+    vim.bo[compose_state.bufnr].readonly = true
+    vim.bo[compose_state.bufnr].modified = false
+  end
   compose_state.parent_state.status = '正在发送消息...'
   render(compose_state.parent_state)
-  local done = false
-  local ok = false
-  compose_state.parent_state.app.backend:chat_send(compose_state.chat_id, text, function(_, err)
-    compose_state.pending = false
-    if err then
-      vim.bo[compose_state.bufnr].modifiable = true
-      vim.bo[compose_state.bufnr].readonly = false
-      compose_state.parent_state.status = '发送失败。'
-      compose_state.parent_state.error = err
-      render(compose_state.parent_state)
-      vim.notify(err.message or '发送失败。', vim.log.levels.ERROR)
-      done = true
-      return
-    end
 
-    ok = true
-    reset_compose_buffer(compose_state)
-    compose_state.parent_state.status = '消息已发送。'
-    compose_state.parent_state.error = nil
-    load_history(compose_state.parent_state, compose_state.chat_id)
-    done = true
-  end)
-
-  if opts.blocking then
-    local finished = vim.wait(opts.timeout_ms or 30000, function()
-      return done
-    end, 50)
-    if not finished then
+  vim.schedule(function()
+    compose_state.parent_state.app.backend:chat_send(compose_state.chat_id, text, function(_, err)
       compose_state.pending = false
-      vim.bo[compose_state.bufnr].modifiable = true
-      vim.bo[compose_state.bufnr].readonly = false
-      compose_state.parent_state.status = '发送超时。'
-      compose_state.parent_state.error = { message = 'Timed out while sending the message.' }
-      render(compose_state.parent_state)
-      vim.notify('发送超时。', vim.log.levels.ERROR)
-      return false
-    end
-    return ok
-  end
+      local current_buf_valid = vim.api.nvim_buf_is_valid(compose_state.bufnr)
+      local unchanged_since_save = current_buf_valid
+          and save_tick ~= nil
+          and vim.api.nvim_buf_get_changedtick(compose_state.bufnr) == save_tick
+      if err then
+        if current_buf_valid then
+          vim.bo[compose_state.bufnr].modifiable = true
+          vim.bo[compose_state.bufnr].readonly = false
+          if unchanged_since_save then
+            vim.bo[compose_state.bufnr].modified = true
+          end
+        end
+        compose_state.parent_state.status = '发送失败。'
+        compose_state.parent_state.error = err
+        render(compose_state.parent_state)
+        vim.notify(err.message or '发送失败。', vim.log.levels.ERROR)
+        return
+      end
+
+      if current_buf_valid then
+        reset_compose_buffer(compose_state)
+        if unchanged_since_save then
+          vim.bo[compose_state.bufnr].modified = false
+        end
+        pcall(vim.api.nvim_exec_autocmds, 'BufWritePost', {
+          buffer = compose_state.bufnr,
+          modeline = false,
+        })
+      end
+      compose_state.parent_state.status = '消息已发送。'
+      compose_state.parent_state.error = nil
+      load_history(compose_state.parent_state, compose_state.chat_id)
+    end)
+  end)
 
   return true
 end
@@ -500,7 +511,7 @@ local function open_compose(state)
     group = group,
     buffer = buf,
     callback = function()
-      save_compose(compose_state, { blocking = true })
+      save_compose(compose_state)
     end,
   })
   vim.api.nvim_create_autocmd('BufWipeout', {
@@ -576,6 +587,7 @@ function M.open(app)
     status = '正在加载...',
     error = nil,
     last_selected_chat_id = nil,
+    preview_enabled = true,
   }
   states[list_buf] = state
 
@@ -620,6 +632,7 @@ function M.open(app)
   map('<CR>', function()
     local chat = current_chat(state)
     if chat then
+      state.preview_enabled = true
       load_history(state, chat.chat_id)
     end
   end, 'Load chat history')
@@ -646,7 +659,7 @@ function M.open(app)
     buffer = list_buf,
     callback = function()
       state.list_win = vim.api.nvim_get_current_win()
-      ensure_preview_window(state)
+      ensure_preview_window(state, false)
       render(state)
     end,
   })
@@ -664,8 +677,33 @@ function M.open(app)
         if util.buffer_visible(list_buf) then
           return
         end
-        collapse_preview_window(state)
+        collapse_preview_window(state, { disable = true })
       end)
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufWinLeave', {
+    group = group,
+    buffer = preview_buf,
+    callback = function()
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(preview_buf) then
+          return
+        end
+        if util.buffer_visible(preview_buf) then
+          return
+        end
+        state.preview_win = nil
+        state.preview_enabled = false
+      end)
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufEnter', {
+    group = group,
+    buffer = preview_buf,
+    callback = function()
+      if vim.api.nvim_get_current_win() ~= state.list_win then
+        state.preview_win = vim.api.nvim_get_current_win()
+      end
     end,
   })
   vim.api.nvim_create_autocmd('BufWipeout', {
@@ -673,7 +711,7 @@ function M.open(app)
     buffer = list_buf,
     callback = function()
       states[list_buf] = nil
-      collapse_preview_window(state)
+      collapse_preview_window(state, { disable = true })
       util.close_buffer(state.preview_buf)
     end,
   })

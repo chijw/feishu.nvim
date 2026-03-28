@@ -314,10 +314,13 @@ local function preview_lines(entry)
   return lines
 end
 
-local function ensure_preview_window(state)
+local function ensure_preview_window(state, force)
   if state.preview_win and vim.api.nvim_win_is_valid(state.preview_win)
       and state.preview_buf and vim.api.nvim_buf_is_valid(state.preview_buf) then
     return true
+  end
+  if not force and state.preview_enabled == false then
+    return false
   end
 
   if not state.list_win or not vim.api.nvim_win_is_valid(state.list_win) then
@@ -347,13 +350,18 @@ local function ensure_preview_window(state)
     }
   end)
 
+  state.preview_enabled = true
   vim.api.nvim_set_current_win(state.list_win)
   return true
 end
 
-local function collapse_preview_window(state)
+local function collapse_preview_window(state, opts)
+  opts = opts or {}
   util.close_window(state.preview_win)
   state.preview_win = nil
+  if opts.disable then
+    state.preview_enabled = false
+  end
 end
 
 local function render_preview(state)
@@ -1012,7 +1020,7 @@ local function prompt_open_url(state)
 end
 
 local function hand_off_to_new_view(state)
-  collapse_preview_window(state)
+  collapse_preview_window(state, { disable = true })
 end
 
 open_entry = function(state, entry)
@@ -1193,6 +1201,7 @@ function M.open(app)
     error = nil,
     docs_query = '',
     auth_scope = nil,
+    preview_enabled = true,
   }
   states[list_buf] = state
   util.attach_help(preview_buf, function()
@@ -1261,7 +1270,7 @@ function M.open(app)
     buffer = list_buf,
     callback = function()
       state.list_win = vim.api.nvim_get_current_win()
-      ensure_preview_window(state)
+      ensure_preview_window(state, false)
       render(state)
     end,
   })
@@ -1279,8 +1288,33 @@ function M.open(app)
         if util.buffer_visible(list_buf) then
           return
         end
-        collapse_preview_window(state)
+        collapse_preview_window(state, { disable = true })
       end)
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufWinLeave', {
+    group = group,
+    buffer = preview_buf,
+    callback = function()
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(preview_buf) then
+          return
+        end
+        if util.buffer_visible(preview_buf) then
+          return
+        end
+        state.preview_win = nil
+        state.preview_enabled = false
+      end)
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufEnter', {
+    group = group,
+    buffer = preview_buf,
+    callback = function()
+      if vim.api.nvim_get_current_win() ~= state.list_win then
+        state.preview_win = vim.api.nvim_get_current_win()
+      end
     end,
   })
   vim.api.nvim_create_autocmd('BufWipeout', {
@@ -1288,7 +1322,7 @@ function M.open(app)
     buffer = list_buf,
     callback = function()
       states[list_buf] = nil
-      collapse_preview_window(state)
+      collapse_preview_window(state, { disable = true })
       util.close_buffer(state.preview_buf)
     end,
   })

@@ -148,14 +148,15 @@ function M.open(opts)
   for _, item in ipairs(items) do
     width = math.max(width, util.display_width(item.label or ''))
   end
+  local desired_height = math.max(8, math.min(#items + 4, math.floor(vim.o.lines * 0.6)))
 
   local buf, win = util.open_centered_float({ title, '' }, {
     name = 'feishu://picker',
     filetype = 'feishu-picker',
     min_width = math.max(32, width + 8),
-    min_height = math.max(6, math.min(#items + 4, math.floor(vim.o.lines * 0.5))),
+    min_height = desired_height,
     max_width_ratio = 0.55,
-    max_height = math.max(8, math.min(#items + 4, math.floor(vim.o.lines * 0.7))),
+    max_height = math.max(desired_height, math.min(#items + 6, math.floor(vim.o.lines * 0.75))),
     cursorline = true,
   })
   state.bufnr = buf
@@ -166,6 +167,9 @@ function M.open(opts)
   })
 
   vim.keymap.set('n', '<CR>', function()
+    confirm()
+  end, { buffer = buf, silent = true, nowait = true, desc = 'Confirm picker selection' })
+  vim.keymap.set('n', 'l', function()
     confirm()
   end, { buffer = buf, silent = true, nowait = true, desc = 'Confirm picker selection' })
   vim.keymap.set('n', '<Space>', function()
@@ -188,6 +192,10 @@ function M.open(opts)
     state.cursor_index = math.max(1, #state.items)
     render()
   end, { buffer = buf, silent = true, nowait = true, desc = 'Move picker to bottom' })
+  vim.keymap.set('n', 'h', function()
+    util.close_window(state.winid)
+    util.close_buffer(state.bufnr)
+  end, { buffer = buf, silent = true, nowait = true, desc = 'Close picker' })
   util.attach_help(buf, function()
     return {
       title = state.title,
