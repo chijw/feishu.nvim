@@ -255,6 +255,11 @@ function M.open_sheet(entry, opts)
   require('feishu.ui.sheet').open(M, entry, opts or {})
 end
 
+function M.open_resource(entry, opts)
+  M._bootstrap()
+  require('feishu.ui.resource').open(M, entry, opts or {})
+end
+
 function M.show_json(title, payload)
   local buf = util.create_scratch_buffer(('feishu://%s'):format(title), 'json')
   local win = vim.api.nvim_get_current_win()

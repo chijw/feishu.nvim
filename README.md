@@ -69,6 +69,9 @@ Strong support:
 - `sheet`
   - opens into a local read-only worksheet preview buffer
   - supports worksheet switching plus horizontal column scrolling
+- `slides` / `mindnote` / generic `file`
+  - open into a local metadata buffer instead of forcing an immediate browser jump
+  - keep `gx` as the escape hatch to the full remote UI
 - `chat`
   - list chats, preview history, compose/send text messages
   - multi-line message bodies are normalized into real buffer lines in the preview split

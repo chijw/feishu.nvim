@@ -295,6 +295,8 @@ local function preview_lines(entry)
     lines[#lines + 1] = '以只读表格预览方式打开；支持切换工作表和横向滚动。'
   elseif entry.type == 'sheet' then
     lines[#lines + 1] = '以只读表格预览方式打开；支持切换工作表和横向滚动。'
+  elseif entry.type == 'slides' or entry.type == 'mindnote' or entry.type == 'file' or entry.type == 'shortcut' then
+    lines[#lines + 1] = '打开本地 metadata 视图；可用 gx 跳转到远端页面。'
   elseif (entry.kind == 'wiki_node' or entry.type == 'wiki') and (entry.type == 'docx' or entry.type == 'doc' or entry.type == 'wiki') then
     lines[#lines + 1] = '导出为本地 Markdown 缓存并打开；docx 保存后会异步同步回远端。'
   elseif entry.type == 'docx' or entry.type == 'doc' then
@@ -1066,6 +1068,15 @@ open_entry = function(state, entry)
   if entry.type == 'sheet' then
     remember_recent_doc(state, entry)
     require('feishu').open_sheet(entry, {
+      target_win = state.preview_win,
+      split = 'right',
+    })
+    return
+  end
+
+  if entry.type == 'slides' or entry.type == 'mindnote' or entry.type == 'file' or entry.type == 'shortcut' then
+    remember_recent_doc(state, entry)
+    require('feishu').open_resource(entry, {
       target_win = state.preview_win,
       split = 'right',
     })
