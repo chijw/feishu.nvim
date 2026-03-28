@@ -556,6 +556,7 @@ local function build_form_lines(state, record, parent_record_id)
     '# Ctrl-S 保存，Ctrl-C 取消。',
     '# 可编辑字段来自当前多维表格 schema。',
     '# 日期时间字段接受 YYYY-MM-DD 或 YYYY-MM-DD HH:MM。',
+    '# 在字段行上按 i 或 Enter 进行编辑；选项字段会自动打开 picker。',
   }
 
   local link_label_to_id = build_link_maps(state, record and record.record_id or nil)
@@ -749,6 +750,35 @@ local function open_form_picker(form_state)
       pcall(vim.api.nvim_win_set_cursor, form_state.winid, { line, 0 })
     end,
   })
+end
+
+local function enter_insert_for_field(form_state)
+  local field, _, line = form_cursor_field(form_state)
+  if not field or not vim.api.nvim_win_is_valid(form_state.winid) then
+    return
+  end
+  local raw = vim.api.nvim_buf_get_lines(form_state.bufnr, line - 1, line, false)[1] or ''
+  local prefix = ('%s: '):format(field.field_name)
+  local column = raw:find(prefix, 1, true)
+  if column == 1 then
+    pcall(vim.api.nvim_win_set_cursor, form_state.winid, { line, #prefix })
+  else
+    pcall(vim.api.nvim_win_set_cursor, form_state.winid, { line, #raw })
+  end
+  vim.api.nvim_set_current_win(form_state.winid)
+  vim.cmd('startinsert')
+end
+
+local function edit_current_form_field(form_state)
+  local field = form_cursor_field(form_state)
+  if not field then
+    return
+  end
+  if picker_capable(field) then
+    open_form_picker(form_state)
+    return
+  end
+  enter_insert_for_field(form_state)
 end
 
 local function parse_checkbox(raw)
@@ -1220,14 +1250,17 @@ local function open_form(state, record, parent_record_id)
   end
 
   map('<CR>', function()
-    open_form_picker(form_state)
-  end, 'Open field picker')
+    edit_current_form_field(form_state)
+  end, 'Edit current field')
+  map('i', function()
+    edit_current_form_field(form_state)
+  end, 'Edit current field')
   map('<C-s>', function()
     save_form(form_state)
   end, 'Save record')
   map(':?', function()
     util.open_help_float('记录编辑', {
-      { '<CR>', '为可选字段打开浮动选择窗' },
+      { 'i / <CR>', '编辑当前字段；选项字段打开浮动选择窗' },
       { '<C-s>', '保存当前记录' },
       { '<C-c>', '取消并关闭窗口' },
       { 'q', '关闭当前窗口' },

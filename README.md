@@ -29,7 +29,9 @@ Native Neovim frontend for Feishu resources, with `feishu-cli` as the primary ba
   - adaptive columns with `h/l`
   - table cycling with `Shift-Tab`
   - record create/edit/delete/open-link
-  - editable form buffer with `Ctrl-S` save and `Ctrl-C` cancel
+  - editable form buffer with `i` / `<CR>` field editing
+  - option-like fields such as single-select, multi-select, user, checkbox, and link fields open a picker instead of requiring manual text entry
+  - `Ctrl-S` save and `Ctrl-C` cancel
 - `:Feishu chats`
   - chat list view
   - history preview via `Enter`
