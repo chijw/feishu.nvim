@@ -107,6 +107,13 @@ function M.close_buffer(buf)
   end
 end
 
+function M.buffer_visible(buf)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return false
+  end
+  return #vim.fn.win_findbuf(buf) > 0
+end
+
 local function ensure_hidden_cursor_hl()
   vim.api.nvim_set_hl(0, 'FeishuHiddenCursor', { blend = 100, nocombine = true })
 end

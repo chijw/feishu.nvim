@@ -121,9 +121,13 @@ local function ensure_preview_window(state)
     }
   end)
 
-  vim.cmd('wincmd h')
-  state.list_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_set_current_win(state.list_win)
   return true
+end
+
+local function collapse_preview_window(state)
+  util.close_window(state.preview_win)
+  state.preview_win = nil
 end
 
 local function render_preview(state)
@@ -637,12 +641,39 @@ function M.open(app)
       on_cursor_moved(list_buf)
     end,
   })
+  vim.api.nvim_create_autocmd('BufEnter', {
+    group = group,
+    buffer = list_buf,
+    callback = function()
+      state.list_win = vim.api.nvim_get_current_win()
+      ensure_preview_window(state)
+      render(state)
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufWinLeave', {
+    group = group,
+    buffer = list_buf,
+    callback = function()
+      vim.schedule(function()
+        if not vim.api.nvim_buf_is_valid(list_buf) then
+          return
+        end
+        if states[list_buf] ~= state then
+          return
+        end
+        if util.buffer_visible(list_buf) then
+          return
+        end
+        collapse_preview_window(state)
+      end)
+    end,
+  })
   vim.api.nvim_create_autocmd('BufWipeout', {
     group = group,
     buffer = list_buf,
     callback = function()
       states[list_buf] = nil
-      util.close_window(state.preview_win)
+      collapse_preview_window(state)
       util.close_buffer(state.preview_buf)
     end,
   })
