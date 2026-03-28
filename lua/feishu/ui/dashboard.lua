@@ -51,9 +51,9 @@ local function render(state)
     '',
   }
 
-  if state.app.opts.task_base_url and state.app.opts.task_base_url ~= '' then
+  if state.app.opts.default_bitable_url and state.app.opts.default_bitable_url ~= '' then
     lines[#lines + 1] = 'Defaults'
-    lines[#lines + 1] = ('  legacy bitable: %s'):format(state.app.opts.task_base_url)
+    lines[#lines + 1] = ('  default bitable: %s'):format(state.app.opts.default_bitable_url)
     lines[#lines + 1] = ''
   end
 

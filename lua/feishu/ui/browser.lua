@@ -233,7 +233,8 @@ end
 local function wiki_node_url(state, node_token)
   local host = state.app.opts.tenant_host
   if not host or host == '' then
-    host = state.app.opts.task_base_url and state.app.opts.task_base_url:match('https://([^/]+)/') or nil
+    local base_url = state.app.opts.default_bitable_url
+    host = base_url and base_url:match('https://([^/]+)/') or nil
   end
   host = host or 'feishu.cn'
   return ('https://%s/wiki/%s'):format(host, node_token)

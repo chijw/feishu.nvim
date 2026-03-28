@@ -25,6 +25,7 @@ Native Neovim frontend for Feishu resources, with `feishu-cli` as the backend.
   - extra auth-login flags can be passed through, for example `:Feishu login --port 14530`
 - `:Feishu tasks`, `:Feishu bitable`
   - opens the generic bitable buffer
+  - `:Feishu tasks` is now just a compatibility alias for `:Feishu bitable`
   - derives primary field / visible columns / editable fields from schema
   - uses a self-link field as a tree automatically when present
   - adaptive columns with `h/l`
@@ -51,6 +52,7 @@ The local config already wires it through `lazy.nvim`:
 
 - The plugin intentionally shells out to CLIs instead of duplicating HTTP logic in Lua.
 - The plugin now uses `feishu-cli` as its only backend.
+- The default bitable entry can come from `default_bitable_url` in plugin config or `default_bitable_url` / legacy `task_board_url` in `workspace.json`.
 - Bitable URLs can be opened either from direct `/base/...` links or from wiki nodes that resolve to bitable resources.
 - Chat listing and history require real `im:*` user scopes on the `feishu-cli` token.
 - Search and chat commands rely on `feishu-cli`'s own user-token resolution path, so token refresh stays in the CLI instead of the plugin.

@@ -1380,7 +1380,7 @@ end
 
 function M.open(app, opts)
   opts = opts or {}
-  local base_url = opts.base_url or app.opts.task_base_url
+  local base_url = opts.base_url or opts.bitable_url or app.opts.default_bitable_url
   if not base_url or base_url == '' then
     notify_error('No base_url configured for feishu.nvim.')
     return

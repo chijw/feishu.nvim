@@ -19,20 +19,30 @@ local function read_json_file(path)
   return nil
 end
 
+local function apply_legacy_option_aliases(opts)
+  if opts.default_bitable_url == nil and type(opts.task_base_url) == 'string' and opts.task_base_url ~= '' then
+    opts.default_bitable_url = opts.task_base_url
+  end
+  opts.task_base_url = nil
+  opts.task_defaults = nil
+  return opts
+end
+
 local function apply_workspace_defaults(opts)
   local workspace = opts.workspace or vim.fn.getcwd()
   local payload = read_json_file(workspace .. '/workspace.json')
   if type(payload) ~= 'table' then
     return opts
   end
-  if opts.task_base_url == nil and type(payload.task_board_url) == 'string' then
-    opts.task_base_url = payload.task_board_url
+  if opts.default_bitable_url == nil then
+    if type(payload.default_bitable_url) == 'string' and payload.default_bitable_url ~= '' then
+      opts.default_bitable_url = payload.default_bitable_url
+    elseif type(payload.task_board_url) == 'string' and payload.task_board_url ~= '' then
+      opts.default_bitable_url = payload.task_board_url
+    end
   end
   if opts.tenant_host == nil and type(payload.tenant_host) == 'string' then
     opts.tenant_host = payload.tenant_host
-  end
-  if type(payload.task_defaults) == 'table' then
-    opts.task_defaults = vim.tbl_deep_extend('force', {}, payload.task_defaults, opts.task_defaults or {})
   end
   local auth_opts = type(opts.auth) == 'table' and vim.deepcopy(opts.auth) or {}
   local payload_auth = type(payload.auth) == 'table' and payload.auth or {}
@@ -200,6 +210,7 @@ function M.command(command_opts)
 end
 function M.setup(opts)
   local merged = Config.merge(opts)
+  merged = apply_legacy_option_aliases(merged)
   merged = apply_workspace_defaults(merged)
   M.opts = merged
   M.backend = Backend.new(merged)

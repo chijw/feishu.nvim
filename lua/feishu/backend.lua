@@ -61,8 +61,9 @@ local function tenant_host(opts)
   if type(opts.tenant_host) == 'string' and opts.tenant_host ~= '' then
     return opts.tenant_host
   end
-  if type(opts.task_base_url) == 'string' and opts.task_base_url ~= '' then
-    local host = opts.task_base_url:match('https://([^/]+)/')
+  local default_bitable_url = opts.default_bitable_url
+  if type(default_bitable_url) == 'string' and default_bitable_url ~= '' then
+    local host = default_bitable_url:match('https://([^/]+)/')
     if host and host ~= '' then
       return host
     end
