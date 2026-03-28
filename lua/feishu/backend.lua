@@ -670,6 +670,77 @@ function Backend:sheet_read_plain(spreadsheet_token, sheet_id, ranges, callback)
   end)
 end
 
+function Backend:file_meta(file_token, doc_type, callback)
+  if type(file_token) ~= 'string' or file_token == '' then
+    callback(nil, { message = 'Missing file token.' })
+    return
+  end
+  if type(doc_type) ~= 'string' or doc_type == '' then
+    callback(nil, { message = 'Missing doc_type for file metadata request.' })
+    return
+  end
+  self:run_external_optional_user({
+    'file',
+    'meta',
+    file_token,
+    '--doc-type',
+    doc_type,
+    '-o',
+    'json',
+  }, { json = true }, function(payload, err, result)
+    if err then
+      callback(nil, err, result)
+      return
+    end
+    local item = type(payload) == 'table' and payload[1] or nil
+    callback(item or {}, nil, result)
+  end)
+end
+
+function Backend:file_stats(file_token, doc_type, callback)
+  if type(file_token) ~= 'string' or file_token == '' then
+    callback(nil, { message = 'Missing file token.' })
+    return
+  end
+  if type(doc_type) ~= 'string' or doc_type == '' then
+    callback(nil, { message = 'Missing doc_type for file statistics request.' })
+    return
+  end
+  self:run_external_optional_user({
+    'file',
+    'stats',
+    file_token,
+    '--doc-type',
+    doc_type,
+    '-o',
+    'json',
+  }, { json = true }, callback)
+end
+
+function Backend:file_download(file_token, output_path, callback)
+  if type(file_token) ~= 'string' or file_token == '' then
+    callback(nil, { message = 'Missing file token.' })
+    return
+  end
+  if type(output_path) ~= 'string' or output_path == '' then
+    callback(nil, { message = 'Missing output path for file download.' })
+    return
+  end
+  self:run_external_optional_user({
+    'file',
+    'download',
+    file_token,
+    '-o',
+    output_path,
+  }, {}, function(_, err, result)
+    if err then
+      callback(nil, err, result)
+      return
+    end
+    callback({ output_path = output_path }, nil, result)
+  end)
+end
+
 function Backend:import_markdown(file_path, document_id, callback)
   if type(file_path) ~= 'string' or file_path == '' then
     callback(nil, { message = 'Missing markdown file path for import.' })

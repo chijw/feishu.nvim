@@ -40,6 +40,10 @@ Native Neovim frontend for Feishu resources, with `feishu-cli` as the backend.
   - compose buffer via `i`
   - send via `Ctrl-S`
   - local filter via `s`, clear via `S`
+- unsupported resources
+  - open into a metadata-oriented resource buffer instead of forcing an immediate browser jump
+  - resource buffers can fetch live `file meta` / `file stats` data when the Feishu API exposes them
+  - generic uploaded files support `o` to download into the local cache; text-like files reopen inside Neovim, binary files fall back to the system opener
 
 ## Install In This Workspace
 
@@ -60,6 +64,7 @@ The local config already wires it through `lazy.nvim`:
 - Cloud-doc search needs the external `feishu-cli` token to include `search:docs:read`. Without it, browse mode still works but search mode will surface the permission error.
 - Wiki-space browsing is best with `wiki:space:retrieve` or `wiki:wiki:readonly`. If they are missing, the docs page now degrades to recent-doc/manual-open mode instead of failing the whole buffer.
 - Drive-root browsing needs user scopes such as `drive:drive:readonly` or `space:document:retrieve`. If they are missing, the browser should surface the permission error instead of showing a fake empty drive.
+- Resource fallback buffers use `feishu-cli file meta`, `file stats`, and `file download` directly, so runtime behavior stays aligned with the external CLI instead of duplicating Feishu HTTP logic inside the plugin.
 
 ## Resource Support
 
@@ -73,7 +78,12 @@ Strong support:
   - supports worksheet switching plus horizontal column scrolling
 - `slides` / `mindnote` / generic `file`
   - open into a local metadata buffer instead of forcing an immediate browser jump
+  - metadata buffers fetch live file metadata when supported by the API
   - keep `gx` as the escape hatch to the full remote UI
+- generic uploaded `file`
+  - supports `o` to download into the local cache directory
+  - text-like files reopen as read-only buffers inside Neovim
+  - other files fall back to the OS-level opener after download
 - `chat`
   - list chats, preview history, compose/send text messages
   - multi-line message bodies are normalized into real buffer lines in the preview split
@@ -98,12 +108,13 @@ Weak or not yet first-class:
 
 - `slides`
 - `mindnote`
-- generic uploaded `file`
 - binary attachments
 
 Fallback behavior:
 
 - If a resource has a stable Feishu URL but no native buffer implementation yet, the plugin opens that URL externally.
+- If a resource can be shown as a metadata buffer, the plugin prefers that buffer before falling back to the browser.
 - If a resource can be exported as Markdown, the plugin prefers a local cache buffer before falling back to the browser.
+- If a generic uploaded file can be downloaded locally, the plugin prefers a local cached copy and only hands off to the OS opener for non-text formats.
 - If a container returns no visible entries from the API, the buffer stays navigable and simply shows `(empty)`.
 - If a resource type is unsupported for structured editing, keep the task/doc citation in Feishu and edit the body through the official web UI for now.
