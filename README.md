@@ -66,6 +66,9 @@ Strong support:
 - `bitable`
   - open into the schema-driven bitable view
   - supports generic read/write/delete for editable field types
+- `sheet`
+  - opens into a local read-only worksheet preview buffer
+  - supports worksheet switching plus horizontal column scrolling
 - `chat`
   - list chats, preview history, compose/send text messages
   - multi-line message bodies are normalized into real buffer lines in the preview split
@@ -84,7 +87,7 @@ Usable with fallback:
   - wiki containers remain navigable as containers
 - `sheet`
   - browser can detect the type
-  - current fallback is opening the remote URL
+  - browser can open a read-only local preview of the first visible rows/columns
 
 Weak or not yet first-class:
 

@@ -335,7 +335,7 @@ function Backend:resolve_url(url, callback)
   local direct_patterns = {
     { kind = 'docx', pattern = '/docx/([^/?#]+)' },
     { kind = 'doc', pattern = '/docs?/([^/?#]+)' },
-    { kind = 'sheet', pattern = '/sheet/([^/?#]+)' },
+    { kind = 'sheet', pattern = '/sheets?/([^/?#]+)' },
     { kind = 'slides', pattern = '/slides/([^/?#]+)' },
     { kind = 'mindnote', pattern = '/mindnote/([^/?#]+)' },
     { kind = 'file', pattern = '/file/([^/?#]+)' },
@@ -618,6 +618,70 @@ function Backend:wiki_export(target, output_path, assets_dir, callback)
     assets_dir,
   }
   self:run_external_optional_user(args, {}, callback)
+end
+
+function Backend:sheet_get(spreadsheet_token, callback)
+  if type(spreadsheet_token) ~= 'string' or spreadsheet_token == '' then
+    callback(nil, { message = 'Missing spreadsheet token.' })
+    return
+  end
+  self:run_external_optional_user({
+    'sheet',
+    'get',
+    spreadsheet_token,
+    '-o',
+    'json',
+  }, { json = true }, callback)
+end
+
+function Backend:sheet_list_sheets(spreadsheet_token, callback)
+  if type(spreadsheet_token) ~= 'string' or spreadsheet_token == '' then
+    callback(nil, { message = 'Missing spreadsheet token.' })
+    return
+  end
+  self:run_external_optional_user({
+    'sheet',
+    'list-sheets',
+    spreadsheet_token,
+    '-o',
+    'json',
+  }, { json = true }, function(payload, err, result)
+    if err then
+      callback(nil, err, result)
+      return
+    end
+    callback({ items = payload or {} }, nil, result)
+  end)
+end
+
+function Backend:sheet_read_plain(spreadsheet_token, sheet_id, ranges, callback)
+  if type(spreadsheet_token) ~= 'string' or spreadsheet_token == '' then
+    callback(nil, { message = 'Missing spreadsheet token.' })
+    return
+  end
+  if type(sheet_id) ~= 'string' or sheet_id == '' then
+    callback(nil, { message = 'Missing sheet_id.' })
+    return
+  end
+  local argv = {
+    'sheet',
+    'read-plain',
+    spreadsheet_token,
+    sheet_id,
+  }
+  for _, item in ipairs(ranges or {}) do
+    if type(item) == 'string' and item ~= '' then
+      argv[#argv + 1] = item
+    end
+  end
+  vim.list_extend(argv, { '-o', 'json' })
+  self:run_external_optional_user(argv, { json = true }, function(payload, err, result)
+    if err then
+      callback(nil, err, result)
+      return
+    end
+    callback({ items = payload or {} }, nil, result)
+  end)
 end
 
 function Backend:import_markdown(file_path, document_id, callback)
