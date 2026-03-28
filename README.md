@@ -2,6 +2,8 @@
 
 中文 | [English](README_en.md)
 
+![feishu.nvim cover](assets/ascii-art-text.png)
+
 > ⚠️AIGC警告：本项目的代码几乎完全由 gpt-5.4 生成，可能存在潜在的bug，虽然现在可以正常运行:)
 
 一个基于 Neovim 的飞书前端，使用 `feishu-cli` 作为后端。
