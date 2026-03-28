@@ -1,0 +1,5 @@
+FFFFF  EEEEE  IIIII   SSSS   H   H  U   U
+F      E        I    S       H   H  U   U
+FFFF   EEEE     I     SSS    HHHHH  U   U
+F      E        I        S   H   H  U   U
+F      EEEEE  IIIII  SSSS    H   H   UUU

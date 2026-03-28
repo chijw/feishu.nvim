@@ -2,6 +2,8 @@
 
 中文 | [English](README_en.md)
 
+![feishu.nvim cover](docs/cover.svg)
+
 > ⚠️说明：本项目的大部分代码由 gpt-5.4 生成，可能仍有未发现的问题。
 
 一个基于 Neovim 的飞书前端，使用 `feishu-cli` 作为后端。
