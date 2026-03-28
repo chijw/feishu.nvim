@@ -283,6 +283,21 @@ function Backend:run_external_optional_user(args, run_opts, callback)
   end)
 end
 
+function Backend:run_external_required_user(args, run_opts, callback)
+  self:resolve_user_env(function(env, _, err)
+    if not env then
+      callback(nil, err or {
+        message = 'A valid Feishu user token is required for this operation.',
+      })
+      return
+    end
+
+    self:_run_with(external_command_base(self.opts), args, vim.tbl_extend('force', vim.deepcopy(run_opts or {}), {
+      env = env,
+    }), callback)
+  end)
+end
+
 function Backend:auth_status(callback)
   self:run_external({ 'auth', 'status', '-o', 'json' }, { json = true }, function(payload, err, result)
     if err then
@@ -935,17 +950,40 @@ function Backend:record_delete(base_url, record_id, callback)
 end
 
 function Backend:chat_list(_, callback)
-  self:run_external_optional_user({ 'msg', 'search-chats', '-o', 'json', '--page-size', '50' }, { json = true }, function(payload, err, result)
-    if err then
-      callback(nil, err, result)
-      return
+  local items = {}
+
+  local function fetch_page(page_token)
+    local args = { 'msg', 'search-chats', '-o', 'json', '--page-size', '100' }
+    if page_token and page_token ~= '' then
+      vim.list_extend(args, { '--page-token', page_token })
     end
-    callback(normalize_items_payload(payload), nil, result)
-  end)
+
+    self:run_external_required_user(args, { json = true }, function(payload, err, result)
+      if err then
+        callback(nil, err, result)
+        return
+      end
+
+      local normalized = normalize_items_payload(payload)
+      vim.list_extend(items, normalized.items or {})
+      if normalized.has_more and normalized.page_token and normalized.page_token ~= '' then
+        fetch_page(normalized.page_token)
+        return
+      end
+
+      callback({
+        items = items,
+        has_more = false,
+        page_token = '',
+      }, nil, result)
+    end)
+  end
+
+  fetch_page(nil)
 end
 
 function Backend:chat_history(chat_id, callback)
-  self:run_external_optional_user({
+  self:run_external_required_user({
     'msg',
     'history',
     '--container-id-type',
@@ -965,8 +1003,55 @@ function Backend:chat_history(chat_id, callback)
   end)
 end
 
+function Backend:chat_members(chat_id, callback)
+  local items = {}
+
+  local function fetch_page(page_token)
+    local args = {
+      'chat',
+      'member',
+      'list',
+      chat_id,
+      '--member-id-type',
+      'open_id',
+      '--page-size',
+      '100',
+    }
+    if page_token and page_token ~= '' then
+      vim.list_extend(args, { '--page-token', page_token })
+    end
+
+    self:run_external_required_user(args, { json = true }, function(payload, err, result)
+      if err then
+        callback(nil, err, result)
+        return
+      end
+
+      local page_items = payload and (payload.items or payload.Items) or {}
+      for _, item in ipairs(page_items) do
+        items[#items + 1] = item
+      end
+
+      local has_more = payload and (payload.has_more or payload.HasMore) or false
+      local next_token = payload and (payload.page_token or payload.PageToken) or ''
+      if has_more and type(next_token) == 'string' and next_token ~= '' then
+        fetch_page(next_token)
+        return
+      end
+
+      callback({
+        items = items,
+        has_more = false,
+        page_token = '',
+      }, nil, result)
+    end)
+  end
+
+  fetch_page(nil)
+end
+
 function Backend:chat_send(chat_id, text, callback)
-  self:run_external_optional_user({
+  self:run_external_required_user({
     'msg',
     'send',
     '--receive-id-type',

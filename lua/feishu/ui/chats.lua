@@ -46,6 +46,19 @@ local function current_chat(state)
   return state.line_to_chat[line]
 end
 
+local function sender_display_name(state, chat_id, sender)
+  local sender_payload = type(sender) == 'table' and sender or {}
+  local sender_id = type(sender_payload.id) == 'string' and sender_payload.id or ''
+  local members = state.member_names_by_chat_id[chat_id] or {}
+  if sender_id ~= '' and type(members[sender_id]) == 'string' and members[sender_id] ~= '' then
+    return members[sender_id]
+  end
+  if type(sender_payload.name) == 'string' and sender_payload.name ~= '' then
+    return sender_payload.name
+  end
+  return sender_id ~= '' and sender_id or (sender_payload.sender_type or 'unknown')
+end
+
 local function matches_chat_filter(chat, query)
   query = vim.trim((query or ''):lower())
   if query == '' then
@@ -183,7 +196,7 @@ local function render_preview(state)
     lines[#lines + 1] = '消息历史'
     for _, item in ipairs(messages) do
       local sender = type(item.sender) == 'table' and item.sender or {}
-      local sender_name = sender.sender_type or sender.id or 'unknown'
+      local sender_name = sender_display_name(state, chat.chat_id, sender)
       local timestamp = ''
       if type(item.create_time) == 'string' and item.create_time:match('^%d+$') then
         timestamp = os.date('%Y-%m-%d %H:%M', math.floor(tonumber(item.create_time) / 1000))
@@ -322,16 +335,59 @@ local function load_history(state, chat_id)
   end
   state.status = ('正在加载 %s 的历史消息...'):format(chat_id)
   render(state)
-  state.app.backend:chat_history(chat_id, function(payload, err)
-    if err then
-      state.history_errors[chat_id] = err
+
+  local remaining = 2
+  local next_history = nil
+  local next_history_err = nil
+  local next_members = state.member_names_by_chat_id[chat_id] or {}
+  local next_member_err = nil
+
+  local function finish()
+    remaining = remaining - 1
+    if remaining > 0 then
+      return
+    end
+
+    if next_history_err then
+      state.history_errors[chat_id] = next_history_err
       state.status = '历史消息加载失败。'
     else
-      state.history_by_chat_id[chat_id] = payload.items or {}
+      state.history_by_chat_id[chat_id] = next_history or {}
       state.history_errors[chat_id] = nil
-      state.status = ('已加载 %d 条消息。'):format(#(payload.items or {}))
+      state.member_names_by_chat_id[chat_id] = next_members
+      if next_member_err then
+        state.status = ('已加载 %d 条消息；成员名称未完全解析。'):format(#(next_history or {}))
+      else
+        state.status = ('已加载 %d 条消息。'):format(#(next_history or {}))
+      end
     end
     render(state)
+  end
+
+  state.app.backend:chat_history(chat_id, function(payload, err)
+    if err then
+      next_history_err = err
+    else
+      next_history = payload.items or {}
+    end
+    finish()
+  end)
+
+  state.app.backend:chat_members(chat_id, function(payload, err)
+    if err then
+      next_member_err = err
+    else
+      local member_map = {}
+      for _, item in ipairs(payload.items or {}) do
+        local member_id = type(item.member_id) == 'string' and item.member_id or ''
+        local member_name = type(item.name) == 'string' and item.name or ''
+        if member_id ~= '' and member_name ~= '' then
+          member_map[member_id] = member_name
+        end
+      end
+      next_members = member_map
+    end
+    finish()
   end)
 end
 
@@ -582,6 +638,7 @@ function M.open(app)
     filter_query = '',
     history_by_chat_id = {},
     history_errors = {},
+    member_names_by_chat_id = {},
     status = '正在加载...',
     error = nil,
     last_selected_chat_id = nil,
@@ -638,6 +695,12 @@ function M.open(app)
   map('i', function()
     open_compose(state)
   end, 'Compose message')
+  vim.keymap.set('n', 'i', function()
+    open_compose(state)
+  end, { buffer = preview_buf, silent = true, nowait = true, desc = 'Compose message' })
+  vim.keymap.set('n', 'gR', function()
+    refresh(state)
+  end, { buffer = preview_buf, silent = true, nowait = true, desc = 'Refresh chats' })
 
   local group = vim.api.nvim_create_augroup(('FeishuChats_%d'):format(list_buf), { clear = true })
   vim.api.nvim_create_autocmd({ 'CursorMoved', 'CursorMovedI' }, {
