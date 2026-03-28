@@ -1152,6 +1152,12 @@ function M.open(app)
     auth_scope = nil,
   }
   states[list_buf] = state
+  util.attach_help(preview_buf, function()
+    return {
+      title = '飞书浏览',
+      items = help_items(state),
+    }
+  end)
 
   local map = function(lhs, rhs, desc)
     vim.keymap.set('n', lhs, rhs, { buffer = list_buf, silent = true, nowait = true, desc = desc })
@@ -1186,9 +1192,12 @@ function M.open(app)
   map('g', function()
     prompt_open_url(state)
   end, 'Open manual URL')
-  map(':?', function()
-    util.open_help_float('飞书浏览', help_items(state))
-  end, 'Show browser help')
+  util.attach_help(list_buf, function()
+    return {
+      title = '飞书浏览',
+      items = help_items(state),
+    }
+  end)
   map('<CR>', function()
     open_entry(state, current_entry(state))
   end, 'Open entry')

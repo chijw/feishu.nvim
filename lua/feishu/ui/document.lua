@@ -68,7 +68,6 @@ local function build_help_items(state)
   local items = {
     { 'gR', '重新同步当前文档缓存' },
     { 'gx', '打开远端 Feishu 链接' },
-    { ':?', '显示帮助' },
     { ':q', '关闭当前缓冲区' },
   }
   if state.editable then
@@ -93,11 +92,6 @@ local function render_error(state, err)
     '',
     '同步失败。',
     err and (err.message or 'request failed') or 'request failed',
-    '',
-    '可用操作:',
-    '  gR  重试同步',
-    '  gx  打开远端链接',
-    '  :?  查看帮助',
   }
   render_loading(state, lines)
 end
@@ -201,9 +195,12 @@ local function attach_maps(buf, state)
       M.sync_current()
     end, 'Sync current Markdown to Feishu')
   end
-  map(':?', function()
-    util.open_help_float('飞书文档', build_help_items(state))
-  end, 'Show document help')
+  util.attach_help(buf, function()
+    return {
+      title = '飞书文档',
+      items = build_help_items(state),
+    }
+  end)
 end
 
 local function attach_buffer_autocmds(state, buf)

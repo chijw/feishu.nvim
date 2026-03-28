@@ -157,7 +157,6 @@ end
 local function help_items(state)
   local items = {
     { 'gR', '重新加载当前资源信息' },
-    { ':?', '显示帮助' },
     { ':q', '关闭当前缓冲区' },
   }
   if state.entry.url and state.entry.url ~= '' then
@@ -407,9 +406,12 @@ local function attach_maps(buf, state)
       download_and_open(state)
     end, 'Download file to local cache and open')
   end
-  map(':?', function()
-    util.open_help_float('飞书资源', help_items(state))
-  end, 'Show resource help')
+  util.attach_help(buf, function()
+    return {
+      title = '飞书资源',
+      items = help_items(state),
+    }
+  end)
 end
 
 function M.open(app, entry, opts)

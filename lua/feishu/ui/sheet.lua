@@ -60,7 +60,6 @@ local function build_help_items()
     { 'h / l', '横向切换可见列' },
     { 'H / L', '切换工作表' },
     { 'J / K', '快速上下移动' },
-    { ':?', '显示帮助' },
     { ':q', '关闭当前缓冲区' },
   }
 end
@@ -406,9 +405,10 @@ function M.open(app, entry, opts)
   map('K', function()
     fast_move(state, -5)
   end, 'Move up faster')
-  map(':?', function()
-    util.open_help_float('飞书表格', build_help_items())
-  end, 'Show sheet help')
+  util.attach_help(buf, {
+    title = '飞书表格',
+    items = build_help_items(),
+  })
 
   local group = vim.api.nvim_create_augroup(('FeishuSheet_%d'):format(buf), { clear = true })
   vim.api.nvim_create_autocmd('BufWipeout', {

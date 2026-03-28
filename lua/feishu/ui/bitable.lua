@@ -340,6 +340,29 @@ local function ensure_preview_window(state)
   vim.wo[state.preview_win].relativenumber = false
   vim.wo[state.preview_win].wrap = true
   pcall(vim.api.nvim_win_set_width, state.preview_win, math.max(42, math.floor(vim.o.columns * (state.app.opts.ui.preview_width or 0.42))))
+  util.attach_help(state.preview_buf, function()
+    local items = {
+      { '<S-Tab>', '切换当前 base 内的 table' },
+      { 'h / l', '横向切换可见列' },
+      { 'J / K', '快速上下移动' },
+      { '<CR>', '重新打开右侧详情预览' },
+      { 'i', '编辑当前记录' },
+      { 'd', '删除当前记录' },
+      { 'o', '打开当前记录中的第一个链接' },
+      { 'r', '刷新当前表' },
+      { 'q', '关闭当前 bitable 页' },
+    }
+    if state.parent_field_name then
+      table.insert(items, 4, { 'a', '在当前组下新增记录' })
+      table.insert(items, 5, { 'A', '新增顶层记录' })
+    else
+      table.insert(items, 4, { 'a / A', '新增记录' })
+    end
+    return {
+      title = '飞书多维表格',
+      items = items,
+    }
+  end)
 
   vim.cmd('wincmd h')
   state.list_win = vim.api.nvim_get_current_win()
@@ -552,34 +575,9 @@ local function build_form_lines(state, record, parent_record_id)
     values[state.parent_field_name] = id_to_label[parent_record_id] or parent_record_id
   end
 
-  local lines = {
-    '# Ctrl-S 保存，Ctrl-C 取消。',
-    '# 可编辑字段来自当前多维表格 schema。',
-    '# 日期时间字段接受 YYYY-MM-DD 或 YYYY-MM-DD HH:MM。',
-    '# 在字段行上按 i 或 Enter 进行编辑；选项字段会自动打开 picker。',
-  }
-
-  local link_label_to_id = build_link_maps(state, record and record.record_id or nil)
-  for _, field in ipairs(state.editable_fields) do
-    local options = field_options(field)
-    if #options > 0 then
-      lines[#lines + 1] = ('# %s options: %s'):format(field.field_name, table.concat(options, ', '))
-    elseif (tostring(field.ui_type or '') == 'SingleLink' or tostring(field.ui_type or '') == 'DuplexLink')
-        and next(link_label_to_id) ~= nil then
-      local labels = vim.tbl_keys(link_label_to_id)
-      table.sort(labels)
-      if #labels <= 20 then
-        lines[#lines + 1] = ('# %s links: %s'):format(field.field_name, table.concat(labels, ', '))
-      end
-    end
-  end
-
+  local lines = {}
   for _, field in ipairs(state.editable_fields) do
     lines[#lines + 1] = ('%s: %s'):format(field.field_name, values[field.field_name] or '')
-  end
-
-  if #state.readonly_fields > 0 then
-    lines[#lines + 1] = '# read-only fields: ' .. table.concat(state.readonly_fields, ', ')
   end
 
   return lines
@@ -779,6 +777,17 @@ local function edit_current_form_field(form_state)
     return
   end
   enter_insert_for_field(form_state)
+end
+
+local function form_help_items()
+  return {
+    { '<CR>', '编辑当前字段' },
+    { 'i / I / a / A', '编辑当前字段；选项字段打开 picker' },
+    { ':w', '保存当前记录' },
+    { ':wq', '保存并关闭当前窗口' },
+    { ':q', '关闭当前窗口' },
+    { ':q!', '丢弃未保存改动并关闭' },
+  }
 end
 
 local function parse_checkbox(raw)
@@ -1162,15 +1171,37 @@ local function refresh(state)
   end)
 end
 
-local function save_form(form_state)
+local function extract_saved_record_id(payload, fallback)
+  if type(fallback) == 'string' and fallback ~= '' then
+    return fallback
+  end
+  if type(payload) ~= 'table' then
+    return nil
+  end
+  if type(payload.record_id) == 'string' and payload.record_id ~= '' then
+    return payload.record_id
+  end
+  local record = type(payload.record) == 'table' and payload.record or nil
+  if record and type(record.record_id) == 'string' and record.record_id ~= '' then
+    return record.record_id
+  end
+  local data = type(payload.data) == 'table' and payload.data or nil
+  if data and type(data.record_id) == 'string' and data.record_id ~= '' then
+    return data.record_id
+  end
+  return nil
+end
+
+local function save_form(form_state, opts)
+  opts = opts or {}
   if form_state.pending then
-    return
+    return false
   end
 
   local form, parse_error = parse_form(form_state.parent_state, form_state.bufnr)
   if not form then
     notify_error(parse_error)
-    return
+    return false
   end
 
   local fields, field_error = build_fields_from_form(form_state.parent_state, form, {
@@ -1179,7 +1210,7 @@ local function save_form(form_state)
   })
   if not fields then
     notify_error(field_error)
-    return
+    return false
   end
 
   form_state.pending = true
@@ -1187,8 +1218,10 @@ local function save_form(form_state)
   vim.bo[form_state.bufnr].readonly = true
   form_state.parent_state.status = '正在保存记录...'
   render(form_state.parent_state)
+  local done = false
+  local ok = false
 
-  local callback = function(_, err)
+  local callback = function(payload, err)
     form_state.pending = false
     if err then
       vim.bo[form_state.bufnr].modifiable = true
@@ -1197,15 +1230,22 @@ local function save_form(form_state)
       form_state.parent_state.error = err
       render(form_state.parent_state)
       notify_error(err.message or 'Save failed.')
+      done = true
       return
     end
 
-    util.close_window(form_state.winid)
-    util.close_buffer(form_state.bufnr)
-    form_states[form_state.bufnr] = nil
+    local saved_record_id = extract_saved_record_id(payload, form_state.record_id)
+    if saved_record_id then
+      form_state.record_id = saved_record_id
+    end
+    ok = true
+    vim.bo[form_state.bufnr].modifiable = true
+    vim.bo[form_state.bufnr].readonly = false
+    vim.bo[form_state.bufnr].modified = false
     form_state.parent_state.status = '记录已保存。'
     form_state.parent_state.error = nil
     refresh_table_data(form_state.parent_state)
+    done = true
   end
 
   if form_state.record_id then
@@ -1213,6 +1253,25 @@ local function save_form(form_state)
   else
     form_state.parent_state.app.backend:record_add(current_base_url(form_state.parent_state), fields, callback)
   end
+
+  if opts.blocking then
+    local finished = vim.wait(opts.timeout_ms or 30000, function()
+      return done
+    end, 50)
+    if not finished then
+      form_state.pending = false
+      vim.bo[form_state.bufnr].modifiable = true
+      vim.bo[form_state.bufnr].readonly = false
+      form_state.parent_state.status = '保存超时。'
+      form_state.parent_state.error = { message = 'Timed out while saving the record.' }
+      render(form_state.parent_state)
+      notify_error('Timed out while saving the record.')
+      return false
+    end
+    return ok
+  end
+
+  return true
 end
 
 local function open_form(state, record, parent_record_id)
@@ -1220,6 +1279,7 @@ local function open_form(state, record, parent_record_id)
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_height(win, math.max(8, math.floor(vim.o.lines * (state.app.opts.ui.form_height or 0.4))))
   local buf = util.create_scratch_buffer('feishu://bitable-form', 'feishu-bitable-form')
+  vim.bo[buf].buftype = 'acwrite'
   vim.api.nvim_win_set_buf(win, buf)
   vim.wo[win].wrap = false
 
@@ -1255,34 +1315,36 @@ local function open_form(state, record, parent_record_id)
   map('i', function()
     edit_current_form_field(form_state)
   end, 'Edit current field')
-  map('<C-s>', function()
-    save_form(form_state)
-  end, 'Save record')
-  map(':?', function()
-    util.open_help_float('记录编辑', {
-      { 'i / <CR>', '编辑当前字段；选项字段打开浮动选择窗' },
-      { '<C-s>', '保存当前记录' },
-      { '<C-c>', '取消并关闭窗口' },
-      { 'q', '关闭当前窗口' },
-    })
-  end, 'Show form help')
-  map('<C-c>', function()
-    util.close_window(win)
-    util.close_buffer(buf)
-  end, 'Cancel form')
-  map('q', function()
-    util.close_window(win)
-    util.close_buffer(buf)
-  end, 'Close form')
-  map('<C-s>', function()
-    vim.cmd('stopinsert')
-    save_form(form_state)
-  end, 'Save record', 'i')
-  map('<C-c>', function()
-    vim.cmd('stopinsert')
-    util.close_window(win)
-    util.close_buffer(buf)
-  end, 'Cancel form', 'i')
+  map('I', function()
+    edit_current_form_field(form_state)
+  end, 'Edit current field')
+  map('a', function()
+    edit_current_form_field(form_state)
+  end, 'Edit current field')
+  map('A', function()
+    edit_current_form_field(form_state)
+  end, 'Edit current field')
+
+  util.attach_help(buf, {
+    title = '记录编辑',
+    items = form_help_items(),
+  })
+
+  local group = vim.api.nvim_create_augroup(('FeishuBitableForm_%d'):format(buf), { clear = true })
+  vim.api.nvim_create_autocmd('BufWriteCmd', {
+    group = group,
+    buffer = buf,
+    callback = function()
+      save_form(form_state, { blocking = true })
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufWipeout', {
+    group = group,
+    buffer = buf,
+    callback = function()
+      form_states[buf] = nil
+    end,
+  })
 end
 
 local function delete_current_record(state)
@@ -1460,9 +1522,12 @@ function M.open(app, opts)
   map('K', function()
     fast_move(state, -5)
   end, 'Move up faster')
-  map(':?', function()
-    util.open_help_float('飞书多维表格', help_items(state))
-  end, 'Show bitable help')
+  util.attach_help(list_buf, function()
+    return {
+      title = '飞书多维表格',
+      items = help_items(state),
+    }
+  end)
   map('<CR>', function()
     render_preview(state)
   end, 'Restore detail preview')

@@ -11,6 +11,19 @@ local function sorted_items(items)
   return items
 end
 
+local function help_items(state)
+  local items = {
+    { '<CR>', '确认当前项' },
+    { 'j / k', '上下移动' },
+    { 'gg / G', '跳到首项或末项' },
+    { 'q / <Esc>', '关闭选择窗' },
+  }
+  if state.multiple then
+    table.insert(items, 2, { '<Space>', '切换当前项' })
+  end
+  return items
+end
+
 function M.open(opts)
   opts = opts or {}
   local items = sorted_items(vim.deepcopy(opts.items or {}))
@@ -108,13 +121,9 @@ function M.open(opts)
     if #state.items == 0 then
       lines[#lines + 1] = '(empty)'
     end
-    lines[#lines + 1] = ''
-    lines[#lines + 1] = state.multiple and '<Space> 切换  <CR> 确认' or '<CR> 确认'
-
     util.set_lines(state.bufnr, lines)
     vim.api.nvim_buf_clear_namespace(state.bufnr, ns, 0, -1)
     vim.api.nvim_buf_add_highlight(state.bufnr, ns, 'Title', 0, 0, -1)
-    vim.api.nvim_buf_add_highlight(state.bufnr, ns, 'Comment', #lines - 1, 0, -1)
 
     for line, index in pairs(state.line_to_index) do
       local item = state.items[index]
@@ -178,6 +187,12 @@ function M.open(opts)
     state.cursor_index = math.max(1, #state.items)
     render()
   end, { buffer = buf, silent = true, nowait = true, desc = 'Move picker to bottom' })
+  util.attach_help(buf, function()
+    return {
+      title = state.title,
+      items = help_items(state),
+    }
+  end)
 
   render()
   return buf, win

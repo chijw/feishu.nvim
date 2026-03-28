@@ -488,6 +488,30 @@ function M.open_help_float(title, items, opts)
   return buf, win
 end
 
+function M.attach_help(buf, provider)
+  if not buf or not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+
+  vim.keymap.set('n', '<leader>vh', function()
+    local payload = type(provider) == 'function' and provider() or provider
+    if type(payload) ~= 'table' then
+      return
+    end
+    local title = payload.title or '快捷键'
+    local items = payload.items or payload
+    if type(items) ~= 'table' then
+      return
+    end
+    M.open_help_float(title, items, payload.opts)
+  end, {
+    buffer = buf,
+    silent = true,
+    nowait = true,
+    desc = 'Show Feishu help',
+  })
+end
+
 function M.open_terminal_float(cmd, opts)
   opts = opts or {}
   local width = math.max(opts.min_width or 72, math.floor(vim.o.columns * (opts.width_ratio or 0.72)))

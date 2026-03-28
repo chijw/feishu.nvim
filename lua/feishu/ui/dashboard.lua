@@ -5,6 +5,16 @@ local M = {}
 local ns = vim.api.nvim_create_namespace('feishu.dashboard')
 local states = {}
 
+local function help_items()
+  return {
+    { 'r', '刷新当前认证状态' },
+    { 't', '打开默认多维表格' },
+    { 'c', '打开消息页' },
+    { 'l', '打开登录浮窗' },
+    { 'q', '关闭当前页' },
+  }
+end
+
 local function has_scope(scopes, expected)
   for _, scope in ipairs(scopes or {}) do
     if scope == expected then
@@ -164,6 +174,10 @@ function M.open(app)
   map('l', function()
     require('feishu').login()
   end, 'Feishu login')
+  util.attach_help(buf, {
+    title = '飞书概览',
+    items = help_items(),
+  })
 
   render(state)
   refresh(state)

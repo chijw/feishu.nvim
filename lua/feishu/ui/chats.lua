@@ -95,6 +95,31 @@ local function ensure_preview_window(state)
   vim.wo[state.preview_win].relativenumber = false
   vim.wo[state.preview_win].wrap = true
   pcall(vim.api.nvim_win_set_width, state.preview_win, math.max(42, math.floor(vim.o.columns * (state.app.opts.ui.preview_width or 0.42))))
+  util.attach_help(state.preview_buf, function()
+    local items = {
+      { '<CR>', '加载当前聊天的历史消息' },
+      { 'i', '打开消息发送窗口' },
+      { 's', '设置本地筛选' },
+      { 'S', '清除当前筛选' },
+      { 'h / l', '横向切换可见列' },
+      { 'J / K', '快速上下移动' },
+      { 'r', '刷新聊天列表' },
+      { 'q', '关闭消息页' },
+    }
+    if #state.chats == 0 then
+      items[2] = nil
+    end
+    local compact = {}
+    for _, item in ipairs(items) do
+      if item then
+        compact[#compact + 1] = item
+      end
+    end
+    return {
+      title = '飞书消息',
+      items = compact,
+    }
+  end)
 
   vim.cmd('wincmd h')
   state.list_win = vim.api.nvim_get_current_win()
@@ -272,6 +297,15 @@ local function help_items(state)
   return compact
 end
 
+local function compose_help_items()
+  return {
+    { ':w', '发送当前消息' },
+    { ':wq', '发送并关闭当前窗口' },
+    { ':q', '关闭当前窗口' },
+    { ':q!', '丢弃未发送内容并关闭' },
+  }
+end
+
 local function load_history(state, chat_id)
   if not chat_id or chat_id == '' then
     return
@@ -334,9 +368,28 @@ local function refresh(state)
   end)
 end
 
-local function save_compose(compose_state)
-  if compose_state.pending then
+local function reset_compose_buffer(compose_state)
+  if not vim.api.nvim_buf_is_valid(compose_state.bufnr) then
     return
+  end
+  local chat = current_chat(compose_state.parent_state)
+  local label = chat and (chat.name ~= '' and chat.name or chat.chat_id) or compose_state.chat_id
+  util.set_lines(compose_state.bufnr, {
+    ('# chat: %s'):format(label),
+    '',
+  }, { modifiable = true })
+  vim.bo[compose_state.bufnr].modifiable = true
+  vim.bo[compose_state.bufnr].readonly = false
+  vim.bo[compose_state.bufnr].modified = false
+  if vim.api.nvim_win_is_valid(compose_state.winid) then
+    pcall(vim.api.nvim_win_set_cursor, compose_state.winid, { 2, 0 })
+  end
+end
+
+local function save_compose(compose_state, opts)
+  opts = opts or {}
+  if compose_state.pending then
+    return false
   end
   local lines = vim.api.nvim_buf_get_lines(compose_state.bufnr, 0, -1, false)
   local content_lines = {}
@@ -348,7 +401,7 @@ local function save_compose(compose_state)
   local text = vim.trim(table.concat(content_lines, '\n'))
   if text == '' then
     vim.notify('消息内容不能为空。', vim.log.levels.WARN)
-    return
+    return false
   end
 
   compose_state.pending = true
@@ -356,6 +409,8 @@ local function save_compose(compose_state)
   vim.bo[compose_state.bufnr].readonly = true
   compose_state.parent_state.status = '正在发送消息...'
   render(compose_state.parent_state)
+  local done = false
+  local ok = false
   compose_state.parent_state.app.backend:chat_send(compose_state.chat_id, text, function(_, err)
     compose_state.pending = false
     if err then
@@ -365,16 +420,36 @@ local function save_compose(compose_state)
       compose_state.parent_state.error = err
       render(compose_state.parent_state)
       vim.notify(err.message or '发送失败。', vim.log.levels.ERROR)
+      done = true
       return
     end
 
-    util.close_window(compose_state.winid)
-    util.close_buffer(compose_state.bufnr)
-    compose_states[compose_state.bufnr] = nil
+    ok = true
+    reset_compose_buffer(compose_state)
     compose_state.parent_state.status = '消息已发送。'
     compose_state.parent_state.error = nil
     load_history(compose_state.parent_state, compose_state.chat_id)
+    done = true
   end)
+
+  if opts.blocking then
+    local finished = vim.wait(opts.timeout_ms or 30000, function()
+      return done
+    end, 50)
+    if not finished then
+      compose_state.pending = false
+      vim.bo[compose_state.bufnr].modifiable = true
+      vim.bo[compose_state.bufnr].readonly = false
+      compose_state.parent_state.status = '发送超时。'
+      compose_state.parent_state.error = { message = 'Timed out while sending the message.' }
+      render(compose_state.parent_state)
+      vim.notify('发送超时。', vim.log.levels.ERROR)
+      return false
+    end
+    return ok
+  end
+
+  return true
 end
 
 local function open_compose(state)
@@ -388,15 +463,15 @@ local function open_compose(state)
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_height(win, math.max(6, math.floor(vim.o.lines * (state.app.opts.ui.compose_height or 0.32))))
   local buf = util.create_scratch_buffer('feishu://chat-compose', 'markdown')
+  vim.bo[buf].buftype = 'acwrite'
   vim.api.nvim_win_set_buf(win, buf)
   util.set_lines(buf, {
     ('# chat: %s'):format(chat.name ~= '' and chat.name or chat.chat_id),
-    '# Ctrl-S 发送，Ctrl-C 取消。',
     '',
   }, { modifiable = true })
   vim.bo[buf].modifiable = true
   vim.bo[buf].readonly = false
-  pcall(vim.api.nvim_win_set_cursor, win, { 3, 0 })
+  pcall(vim.api.nvim_win_set_cursor, win, { 2, 0 })
 
   local compose_state = {
     parent_state = state,
@@ -411,33 +486,26 @@ local function open_compose(state)
     vim.keymap.set(mode or 'n', lhs, rhs, { buffer = buf, silent = true, nowait = true, desc = desc })
   end
 
-  map(':?', function()
-    util.open_help_float('消息编辑', {
-      { '<C-s>', '发送当前消息' },
-      { '<C-c>', '取消并关闭窗口' },
-      { 'q', '关闭当前窗口' },
-    })
-  end, 'Show compose help')
-  map('<C-s>', function()
-    save_compose(compose_state)
-  end, 'Send message')
-  map('<C-c>', function()
-    util.close_window(win)
-    util.close_buffer(buf)
-  end, 'Cancel compose')
-  map('q', function()
-    util.close_window(win)
-    util.close_buffer(buf)
-  end, 'Close compose')
-  map('<C-s>', function()
-    vim.cmd('stopinsert')
-    save_compose(compose_state)
-  end, 'Send message', 'i')
-  map('<C-c>', function()
-    vim.cmd('stopinsert')
-    util.close_window(win)
-    util.close_buffer(buf)
-  end, 'Cancel compose', 'i')
+  util.attach_help(buf, {
+    title = '消息编辑',
+    items = compose_help_items(),
+  })
+
+  local group = vim.api.nvim_create_augroup(('FeishuCompose_%d'):format(buf), { clear = true })
+  vim.api.nvim_create_autocmd('BufWriteCmd', {
+    group = group,
+    buffer = buf,
+    callback = function()
+      save_compose(compose_state, { blocking = true })
+    end,
+  })
+  vim.api.nvim_create_autocmd('BufWipeout', {
+    group = group,
+    buffer = buf,
+    callback = function()
+      compose_states[buf] = nil
+    end,
+  })
 end
 
 local function fast_move(state, delta)
@@ -538,9 +606,12 @@ function M.open(app)
   map('K', function()
     fast_move(state, -5)
   end, 'Move up faster')
-  map(':?', function()
-    util.open_help_float('飞书消息', help_items(state))
-  end, 'Show chats help')
+  util.attach_help(list_buf, function()
+    return {
+      title = '飞书消息',
+      items = help_items(state),
+    }
+  end)
   map('<CR>', function()
     local chat = current_chat(state)
     if chat then
