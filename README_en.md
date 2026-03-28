@@ -1,0 +1,450 @@
+# feishu.nvim
+
+[中文版本](README.md) | English Version
+
+A Neovim frontend for Feishu resources, with all backend operations delegated to `feishu-cli`.
+
+The goal is not to embed another pseudo-TUI inside Neovim. Instead, `feishu.nvim` maps common Feishu resources to normal buffers, windows, and pickers, so you can keep using native Vim workflows for cloud docs, chat, and bitable boards.
+
+## Features
+
+- Cloud document browser
+  - the root page has only two entries: `Docs` and `Chats`
+  - supports generic browsing across wiki spaces, drive folders, recent items, and search results
+  - opened documents live in independent buffers instead of being tightly coupled to the browser
+- Generic bitable view
+  - columns are rendered dynamically from schema instead of hardcoded field names
+  - supports horizontal scrolling, table switching, grouping, and record preview
+  - supports create, edit, and delete for records
+  - single-select, multi-select, user, checkbox, and link-style fields use pickers instead of raw manual input
+  - record forms support doc citation, hyperlink opening, and async save
+- Local document cache
+  - `docx` and exportable wiki docs are materialized as local Markdown
+  - `:w` writes the local file and asynchronously syncs it back to Feishu
+  - normal Vim editing, search, macros, and buffer management remain intact
+- Chat view
+  - browse chat lists
+  - preview recent history
+  - write messages in a separate compose buffer and send them with `:w`
+- Resource fallbacks
+  - `sheet` opens as a read-only preview
+  - `slides`, `mindnote`, and generic files open in metadata-oriented fallback buffers
+  - generic files can be downloaded into a local cache before being opened locally
+- External backend only
+  - the plugin does not maintain a separate Feishu HTTP client in Lua
+  - the supported backend is [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli)
+
+## Requirements
+
+- Neovim `0.10+`
+  - the plugin relies on modern Lua APIs, floating windows, and `vim.system()`
+- `feishu-cli`
+  - recommended backend: [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli)
+  - the binary name is still `feishu-cli`
+  - it must be available in `PATH`, or you must provide an absolute path via `external_cmd`
+- A configured Feishu Open Platform app
+  - you need an `App ID` and `App Secret`
+  - you also need to configure an OAuth redirect URL for the app
+
+## Backend Setup: feishu-cli
+
+`feishu.nvim` does not implement login or token management itself. It reuses `feishu-cli` for that.
+
+### 1. Install feishu-cli
+
+Use a release build of `chijw/feishu-cli`. As long as `feishu-cli` is executable on your machine, the plugin can use it.
+
+You can verify the installation with:
+
+```bash
+feishu-cli version
+```
+
+### 2. Configure `config.yaml`
+
+You can use environment variables, but a config file is usually better for day-to-day use.
+
+Initialize it first:
+
+```bash
+feishu-cli config init
+```
+
+Then edit `~/.feishu-cli/config.yaml`:
+
+```yaml
+app_id: "cli_xxx"
+app_secret: "xxx"
+base_url: "https://open.feishu.cn"
+owner_email: ""
+transfer_ownership: false
+debug: false
+
+export:
+  download_images: true
+  assets_dir: "./assets"
+
+import:
+  upload_images: true
+```
+
+At minimum, `app_id` and `app_secret` must be filled in.
+
+### 3. Configure the OAuth redirect URL
+
+Add an OAuth redirect URL in the Feishu Open Platform app settings. The port must match the port you later use for login.
+
+Example:
+
+```text
+http://127.0.0.1:14530/callback
+```
+
+If you prefer another port, that is fine, but it must stay consistent.
+
+### 4. Login and obtain a user token
+
+```bash
+feishu-cli auth login --port 14530
+```
+
+If Neovim runs on a remote machine and your browser runs locally, use manual mode:
+
+```bash
+feishu-cli auth login --manual --port 14530
+```
+
+After login, it is a good idea to check:
+
+```bash
+feishu-cli auth status -o json
+feishu-cli auth token -o json
+```
+
+Notes:
+
+- `auth login` uses `feishu-cli`'s recommended scope set by default and automatically includes `offline_access`
+- in most cases, you should not override scopes unless you know exactly what is missing
+- `:Feishu login` in the plugin is just a wrapper around `feishu-cli auth login`
+
+### 5. Recommended user OAuth scopes
+
+If you want `Docs`, `Chats`, and `Bitable` to work well inside the plugin, the user token should cover at least the following kinds of capabilities:
+
+- doc search: `search:docs:read`
+- wiki browsing: `wiki:space:retrieve` or `wiki:wiki:readonly`
+- doc export/edit: `docx:document`
+- bitable access: `bitable:app`
+- IM access: `im:*`
+- refreshable login state: `offline_access`
+
+If you use the default scope set from `feishu-cli auth login`, you typically do not need to manage these one by one.
+
+## Installing the Plugin
+
+There is no build step. You only need to place the repository on your runtimepath and make sure `feishu-cli` is available.
+
+### `lazy.nvim` / LazyVim
+
+```lua
+{
+  "chijw/feishu.nvim",
+  config = function()
+    require("feishu").setup({
+      workspace = vim.fn.getcwd(),
+      default_bitable_url = nil,
+      auth = {
+        redirect_port = 14530,
+      },
+    })
+  end,
+}
+```
+
+### Native Neovim packages
+
+```bash
+git clone git@github.com:chijw/feishu.nvim.git \
+  ~/.local/share/nvim/site/pack/feishu/start/feishu.nvim
+```
+
+Then in your config:
+
+```lua
+require("feishu").setup({})
+```
+
+### `vim-plug` (Neovim only)
+
+```vim
+Plug 'chijw/feishu.nvim'
+```
+
+```lua
+require("feishu").setup({})
+```
+
+`feishu.nvim` is Neovim-only and does not support classic Vim.
+
+## Configuration
+
+Minimal setup:
+
+```lua
+require("feishu").setup({
+  workspace = vim.fn.getcwd(),
+  auth = {
+    redirect_port = 14530,
+  },
+})
+```
+
+A more complete example:
+
+```lua
+require("feishu").setup({
+  workspace = "/path/to/your/workspace",
+  tenant_host = "xcnpgx5jojlc.feishu.cn",
+  default_bitable_url = "https://xxx.feishu.cn/base/xxxx?table=tblxxx&view=vewxxx",
+
+  auth = {
+    redirect_port = 14530,
+    login_scopes = nil,
+  },
+
+  keymaps = {
+    browser = "<leader>vf",
+    dashboard = "",
+    tasks = "",
+    chats = "",
+  },
+
+  ui = {
+    preview_width = 0.42,
+    form_height = 0.40,
+    compose_height = 0.32,
+  },
+
+  external_cmd = { "feishu-cli" },
+  -- external_cmd = { "/absolute/path/to/feishu-cli" },
+})
+```
+
+### Available options
+
+- `workspace`
+  - workspace root directory
+  - the plugin also looks for `workspace.json` here
+- `tenant_host`
+  - Feishu host name used by some URL resolution paths
+- `default_bitable_url`
+  - default bitable URL for direct bitable entry points
+- `auth.redirect_port`
+  - default OAuth callback port used by `:Feishu login`
+- `auth.login_scopes`
+  - optional custom scopes; usually best left unset so the plugin uses the backend default recommendation
+- `keymaps.browser`
+  - defaults to `<leader>vf`
+- `ui.preview_width`
+  - width ratio for right-side preview windows
+- `ui.form_height`
+  - height ratio for bitable edit forms
+- `ui.compose_height`
+  - height ratio for chat compose windows
+- `external_cmd`
+  - backend command; defaults to `{ "feishu-cli" }`
+- `cache_dir`
+  - optional custom cache directory
+
+### `workspace.json`
+
+If you do not want to hardcode workspace-specific defaults inside your global `init.lua`, place a `workspace.json` in the project root:
+
+```json
+{
+  "default_bitable_url": "https://xxx.feishu.cn/base/xxxx?table=tblxxx&view=vewxxx",
+  "tenant_host": "xcnpgx5jojlc.feishu.cn",
+  "auth": {
+    "redirect_port": 14530
+  }
+}
+```
+
+The plugin will pick these defaults up automatically.
+
+## Commands
+
+The main entry point is `:Feishu`.
+
+- `:Feishu`
+- `:Feishu browse`
+  - open the root browser
+- `:Feishu dashboard`
+- `:Feishu auth`
+  - open the auth status page
+- `:Feishu login`
+  - open a floating terminal and run `feishu-cli auth login --manual`
+- `:Feishu login --port 14530`
+  - pass extra login arguments through to the backend
+- `:Feishu bitable`
+- `:Feishu tasks`
+  - compatibility alias; still opens the generic bitable view
+- `:Feishu chats`
+
+Default mappings:
+
+- `<leader>vf`
+  - open the Feishu root browser
+- `<leader>vh`
+  - open the keymap help float for the current Feishu buffer
+
+## Usage
+
+### Cloud docs
+
+After opening `<leader>vf`, use `Enter` or `l` to enter:
+
+- `Docs`
+- `Chats`
+
+Inside `Docs`, you can:
+
+- browse wiki spaces, drive folders, recent items, and search results
+- open `docx`, `wiki`, `sheet`, and `bitable` resources directly
+- create a document inside the current container
+- manually resolve and open a resource from a Feishu URL
+
+### Bitable
+
+The bitable view is schema-driven rather than workspace-hardcoded.
+
+Current support:
+
+- dynamic columns
+- `h / l` for horizontal scrolling
+- `J / K` for faster movement
+- `<S-Tab>` to cycle tables inside the same base
+- `gr` to choose a grouping field
+- `a` / `A` to create records
+- `i` to edit a record
+- `d` to delete a record
+- `gd` / `o` to open links from the current record
+
+Inside a record-edit buffer:
+
+- `Enter` / `i` / `a` / `A` / `I` can all start editing the current field
+- picker-capable fields open a floating picker
+- `c` searches and inserts a citation to an existing Feishu doc
+- `gd` / `o` opens the first hyperlink on the current field line
+- `:w` saves the current record
+
+### Documents
+
+Supported document-like resources open as standalone Markdown buffers.
+
+Current behavior:
+
+- `:w` saves locally and asynchronously syncs back to Feishu
+- `gR` refreshes the local cache from the remote copy
+- `gS` manually triggers a sync
+- `gx` opens the remote Feishu page
+
+### Chats
+
+The chat view currently supports:
+
+- browsing chat lists
+- previewing message history
+- opening a compose buffer with `i`
+- sending with `:w`
+- local filtering with `s` / `S`
+
+## Resource Support
+
+### Strong native support
+
+- `bitable`
+  - read/write/delete, grouping, picker-driven forms, doc citation, hyperlink jump
+- `docx` / exportable wiki docs
+  - local Markdown cache
+  - async sync-back on `:w`
+- `chat`
+  - browse, preview, send
+- `sheet`
+  - read-only preview
+
+### Fallback-first for now
+
+- `slides`
+- `mindnote`
+- generic uploaded files
+- other resource types without dedicated native buffers yet
+
+Fallback strategy:
+
+- if the resource can be exported as Markdown, prefer a local cache buffer
+- if it can at least be previewed, prefer a metadata/preview buffer
+- generic files can be downloaded into a local cache
+- if a resource is not practical to handle locally yet, keep `gx` as the escape hatch to the official UI
+
+## Troubleshooting
+
+### 1. `:Feishu` opens, but `Docs` looks empty
+
+This is usually a scope problem rather than a plugin crash. Check:
+
+```bash
+feishu-cli auth status -o json
+```
+
+Pay special attention to:
+
+- `search:docs:read`
+- `wiki:space:retrieve` or `wiki:wiki:readonly`
+- `docx:document`
+
+If one of these is missing, log in again.
+
+### 2. `Chats` cannot open or does not show expected history
+
+Check whether the OAuth token really contains the needed `im:*` user scopes. Many "it should be authorized" cases turn out to be incomplete token scopes.
+
+### 3. `:Feishu login` reports a redirect URL error
+
+Your redirect URL configured in Feishu Open Platform does not match the port you actually used for login. For example:
+
+- platform setting: `http://127.0.0.1:14530/callback`
+- login command: `--port 14530`
+
+These must match.
+
+### 4. `feishu-cli` cannot be found
+
+If the backend binary is not in `PATH`, set it explicitly:
+
+```lua
+require("feishu").setup({
+  external_cmd = { "/absolute/path/to/feishu-cli" },
+})
+```
+
+## Design Principles
+
+- do not re-implement an entire Feishu API client in Lua
+- keep interactions aligned with native Neovim buffers, windows, and `:w`
+- avoid workspace-specific hardcode
+- prioritize generic, maintainable capabilities over one-off workflow hacks
+
+## Backend Compatibility Contract
+
+This plugin is currently developed and validated against [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli).
+
+If you swap in another `feishu-cli` variant, it should provide compatible commands and JSON output for at least:
+
+- `auth login`
+- `auth status -o json`
+- `auth token -o json`
+- doc export / import
+- bitable table / field / record operations
+- chat list / history / send
+- wiki / drive / search / file metadata related commands

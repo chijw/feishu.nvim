@@ -1,5 +1,7 @@
 # feishu.nvim
 
+中文版本 | [English Version](README_en.md)
+
 一个基于 Neovim buffer 的飞书前端，后端统一委托给 `feishu-cli`。
 
 它的目标不是在 Neovim 里再塞一个伪 TUI，而是把飞书里的常见资源直接映射成正常的 buffer / window / picker，让你继续用原生 Vim 工作流操作云文档、消息和多维表格。
