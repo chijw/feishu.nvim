@@ -36,10 +36,11 @@ function M.pad(text, width)
   return text .. string.rep(' ', math.max(0, width - M.display_width(text)))
 end
 
-function M.create_scratch_buffer(name, filetype)
-  local buf = vim.api.nvim_create_buf(false, true)
+function M.create_scratch_buffer(name, filetype, opts)
+  opts = opts or {}
+  local buf = vim.api.nvim_create_buf(opts.listed == true, true)
   vim.bo[buf].buftype = 'nofile'
-  vim.bo[buf].bufhidden = 'wipe'
+  vim.bo[buf].bufhidden = opts.bufhidden or 'wipe'
   vim.bo[buf].swapfile = false
   vim.bo[buf].modifiable = false
   vim.bo[buf].readonly = true

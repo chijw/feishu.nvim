@@ -4,6 +4,7 @@ local M = {}
 
 local ns = vim.api.nvim_create_namespace('feishu.browser')
 local states = {}
+local help_items
 
 local TYPE_ICONS = {
   category_docs = 'DOC',
@@ -313,8 +314,46 @@ local function preview_lines(entry)
   return lines
 end
 
-local function render_preview(state)
+local function ensure_preview_window(state)
+  if state.preview_win and vim.api.nvim_win_is_valid(state.preview_win)
+      and state.preview_buf and vim.api.nvim_buf_is_valid(state.preview_buf) then
+    return true
+  end
+
+  if not state.list_win or not vim.api.nvim_win_is_valid(state.list_win) then
+    state.list_win = vim.api.nvim_get_current_win()
+  end
+  if not state.list_win or not vim.api.nvim_win_is_valid(state.list_win) then
+    return false
+  end
+
+  vim.api.nvim_set_current_win(state.list_win)
+  vim.cmd('botright vsplit')
+  state.preview_win = vim.api.nvim_get_current_win()
   if not state.preview_buf or not vim.api.nvim_buf_is_valid(state.preview_buf) then
+    state.preview_buf = util.create_scratch_buffer('feishu://browser-preview', 'feishu-browser-preview', {
+      bufhidden = 'hide',
+    })
+  end
+  vim.api.nvim_win_set_buf(state.preview_win, state.preview_buf)
+  vim.wo[state.preview_win].number = false
+  vim.wo[state.preview_win].relativenumber = false
+  vim.wo[state.preview_win].wrap = true
+  pcall(vim.api.nvim_win_set_width, state.preview_win, math.max(42, math.floor(vim.o.columns * (state.app.opts.ui.preview_width or 0.42))))
+  util.attach_help(state.preview_buf, function()
+    return {
+      title = '飞书浏览',
+      items = help_items(state),
+    }
+  end)
+
+  vim.cmd('wincmd h')
+  state.list_win = vim.api.nvim_get_current_win()
+  return true
+end
+
+local function render_preview(state)
+  if not ensure_preview_window(state) then
     return
   end
   local entry = current_entry(state)
@@ -383,7 +422,7 @@ local function render(state)
   render_preview(state)
 end
 
-local function help_items(state)
+help_items = function(state)
   local items = {
     { 'l / <CR>', '打开或进入当前条目' },
     { 'h', '返回上一级' },
@@ -970,9 +1009,7 @@ end
 
 local function hand_off_to_new_view(state)
   util.close_window(state.preview_win)
-  util.close_buffer(state.preview_buf)
   state.preview_win = nil
-  state.preview_buf = nil
 end
 
 open_entry = function(state, entry)
@@ -1121,13 +1158,18 @@ end
 
 function M.open(app)
   local list_win = vim.api.nvim_get_current_win()
-  local list_buf = util.create_scratch_buffer('feishu://browser', 'feishu-browser')
+  local list_buf = util.create_scratch_buffer('feishu://browser', 'feishu-browser', {
+    listed = true,
+    bufhidden = 'hide',
+  })
   vim.api.nvim_win_set_buf(list_win, list_buf)
   util.configure_selection_window(list_win, list_buf, { wrap = false })
 
   vim.cmd('botright vsplit')
   local preview_win = vim.api.nvim_get_current_win()
-  local preview_buf = util.create_scratch_buffer('feishu://browser-preview', 'feishu-browser-preview')
+  local preview_buf = util.create_scratch_buffer('feishu://browser-preview', 'feishu-browser-preview', {
+    bufhidden = 'hide',
+  })
   vim.api.nvim_win_set_buf(preview_win, preview_buf)
   vim.wo[preview_win].number = false
   vim.wo[preview_win].relativenumber = false
@@ -1164,8 +1206,8 @@ function M.open(app)
   end
 
   map('q', function()
-    util.close_window(preview_win)
-    util.close_buffer(preview_buf)
+    util.close_window(state.preview_win)
+    util.close_buffer(state.preview_buf)
     util.close_buffer(list_buf)
   end, 'Close browser')
   map('r', function()
@@ -1213,13 +1255,22 @@ function M.open(app)
       on_cursor_moved(list_buf)
     end,
   })
+  vim.api.nvim_create_autocmd('BufEnter', {
+    group = group,
+    buffer = list_buf,
+    callback = function()
+      state.list_win = vim.api.nvim_get_current_win()
+      ensure_preview_window(state)
+      render(state)
+    end,
+  })
   vim.api.nvim_create_autocmd('BufWipeout', {
     group = group,
     buffer = list_buf,
     callback = function()
       states[list_buf] = nil
-      util.close_window(preview_win)
-      util.close_buffer(preview_buf)
+      util.close_window(state.preview_win)
+      util.close_buffer(state.preview_buf)
     end,
   })
 

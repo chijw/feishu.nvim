@@ -6,6 +6,7 @@ local M = {}
 local ns = vim.api.nvim_create_namespace('feishu.bitable')
 local states = {}
 local form_states = {}
+local open_current_link
 
 local UI_TYPE_WIDTHS = {
   Text = { min = 10, max = 32 },
@@ -106,38 +107,125 @@ local function extract_link_record_ids(value)
   return ids
 end
 
-local function extract_urls(value, urls)
-  urls = urls or {}
+local function tenant_host(app)
+  local host = type(app.opts.tenant_host) == 'string' and app.opts.tenant_host or ''
+  if host ~= '' then
+    return host
+  end
+  local base_url = type(app.opts.default_bitable_url) == 'string' and app.opts.default_bitable_url or ''
+  local matched = base_url:match('https://([^/]+)/')
+  if matched and matched ~= '' then
+    return matched
+  end
+  return 'feishu.cn'
+end
+
+local function mention_resource_type(item)
+  local raw = tostring(item.realMentionType or item.mentionType or ''):lower()
+  local aliases = {
+    doc = 'doc',
+    docs = 'doc',
+    docx = 'docx',
+    sheet = 'sheet',
+    bitable = 'bitable',
+    wiki = 'wiki',
+    folder = 'folder',
+    file = 'file',
+    slides = 'slides',
+    mindnote = 'mindnote',
+  }
+  return aliases[raw]
+end
+
+local function mention_url(app, item)
+  local direct = type(item.link) == 'string' and item.link or (type(item.url) == 'string' and item.url or nil)
+  if direct and direct ~= '' then
+    return direct
+  end
+  local token = type(item.token) == 'string' and item.token or ''
+  local resource_type = mention_resource_type(item)
+  if token == '' or not resource_type then
+    return nil
+  end
+  local host = tenant_host(app)
+  if resource_type == 'wiki' then
+    return ('https://%s/wiki/%s'):format(host, token)
+  end
+  if resource_type == 'bitable' then
+    return ('https://%s/base/%s'):format(host, token)
+  end
+  return ('https://%s/%s/%s'):format(host, resource_type, token)
+end
+
+local function append_link(links, seen, link)
+  if not link or type(link.url) ~= 'string' or link.url == '' then
+    return
+  end
+  local key = ('%s\0%s'):format(link.url, tostring(link.label or ''))
+  if seen[key] then
+    return
+  end
+  seen[key] = true
+  links[#links + 1] = link
+end
+
+local function extract_links(app, value, links, seen)
+  links = links or {}
+  seen = seen or {}
   if value == nil then
-    return urls
+    return links
   end
   if type(value) == 'string' then
     for url in value:gmatch('https?://[^%s%)%]]+') do
-      urls[#urls + 1] = url
+      append_link(links, seen, {
+        label = url,
+        url = url,
+      })
     end
-    return urls
+    return links
   end
   if type(value) == 'table' then
-    if value.link and type(value.link) == 'string' then
-      urls[#urls + 1] = value.link
-    end
-    if value.url and type(value.url) == 'string' then
-      urls[#urls + 1] = value.url
+    local url = mention_url(app, value)
+    if url then
+      append_link(links, seen, {
+        label = tostring(value.text or value.name or value.token or url),
+        url = url,
+        token = type(value.token) == 'string' and value.token or nil,
+        resource_type = mention_resource_type(value),
+      })
     end
     if value.text and type(value.text) == 'string' then
-      extract_urls(value.text, urls)
+      extract_links(app, value.text, links, seen)
     end
     if value.value then
-      extract_urls(value.value, urls)
+      extract_links(app, value.value, links, seen)
     end
     for _, item in ipairs(value) do
-      extract_urls(item, urls)
+      extract_links(app, item, links, seen)
+    end
+    for key, item in pairs(value) do
+      if type(key) ~= 'number'
+          and key ~= 'link'
+          and key ~= 'url'
+          and key ~= 'text'
+          and key ~= 'value'
+          and key ~= 'token'
+          and key ~= 'mentionType'
+          and key ~= 'realMentionType'
+          and key ~= 'type'
+          and key ~= 'name' then
+        extract_links(app, item, links, seen)
+      end
     end
   end
-  return urls
+  return links
 end
 
-local function format_rich_value(value)
+local function markdown_link(label, url)
+  return ('[%s](%s)'):format(label or url or '', url or '')
+end
+
+local function format_rich_value(value, app)
   if value == nil then
     return ''
   end
@@ -148,19 +236,30 @@ local function format_rich_value(value)
     return extract_date(value)
   end
   if type(value) == 'table' then
+    local link = mention_url(app or { opts = {} }, value)
+    if link then
+      return markdown_link(tostring(value.text or value.name or value.token or link), link)
+    end
     if #value > 0 then
       local parts = {}
+      local rich_sequence = true
       for _, item in ipairs(value) do
-        if type(item) == 'table' and item.link and item.text then
-          parts[#parts + 1] = ('%s <%s>'):format(item.text, item.link)
-        else
-          parts[#parts + 1] = extract_text(item)
+        if type(item) ~= 'table' or (item.type == nil and item.text == nil and item.link == nil and item.url == nil) then
+          rich_sequence = false
         end
       end
-      return table.concat(parts, ', ')
+      for _, item in ipairs(value) do
+        local item_link = type(item) == 'table' and mention_url(app or { opts = {} }, item) or nil
+        if item_link then
+          parts[#parts + 1] = markdown_link(tostring(item.text or item.name or item.token or item_link), item_link)
+        else
+          parts[#parts + 1] = format_rich_value(item, app)
+        end
+      end
+      return table.concat(parts, rich_sequence and '' or ', ')
     end
     if value.type and value.value then
-      return format_rich_value(value.value)
+      return format_rich_value(value.value, app)
     end
     return extract_text(value)
   end
@@ -320,20 +419,10 @@ local function current_base_url(state)
   return ('%s?table=%s'):format(state.base_root, state.active_table_id)
 end
 
-local function ensure_preview_window(state)
-  if state.preview_win and vim.api.nvim_win_is_valid(state.preview_win)
-      and state.preview_buf and vim.api.nvim_buf_is_valid(state.preview_buf) then
-    return true
-  end
-  if not state.list_win or not vim.api.nvim_win_is_valid(state.list_win) then
-    return false
-  end
-
-  vim.api.nvim_set_current_win(state.list_win)
-  vim.cmd('botright vsplit')
-  state.preview_win = vim.api.nvim_get_current_win()
-  if not state.preview_buf or not vim.api.nvim_buf_is_valid(state.preview_buf) then
-    state.preview_buf = util.create_scratch_buffer('feishu://bitable-detail', 'feishu-bitable-detail')
+local function configure_preview(state)
+  if not state.preview_win or not vim.api.nvim_win_is_valid(state.preview_win)
+      or not state.preview_buf or not vim.api.nvim_buf_is_valid(state.preview_buf) then
+    return
   end
   vim.api.nvim_win_set_buf(state.preview_win, state.preview_buf)
   vim.wo[state.preview_win].number = false
@@ -363,6 +452,31 @@ local function ensure_preview_window(state)
       items = items,
     }
   end)
+  vim.keymap.set('n', 'o', function()
+    open_current_link(state)
+  end, { buffer = state.preview_buf, silent = true, nowait = true, desc = 'Open link under cursor' })
+  vim.keymap.set('n', '<CR>', function()
+    open_current_link(state)
+  end, { buffer = state.preview_buf, silent = true, nowait = true, desc = 'Open link under cursor' })
+end
+
+local function ensure_preview_window(state)
+  if state.preview_win and vim.api.nvim_win_is_valid(state.preview_win)
+      and state.preview_buf and vim.api.nvim_buf_is_valid(state.preview_buf) then
+    configure_preview(state)
+    return true
+  end
+  if not state.list_win or not vim.api.nvim_win_is_valid(state.list_win) then
+    return false
+  end
+
+  vim.api.nvim_set_current_win(state.list_win)
+  vim.cmd('botright vsplit')
+  state.preview_win = vim.api.nvim_get_current_win()
+  if not state.preview_buf or not vim.api.nvim_buf_is_valid(state.preview_buf) then
+    state.preview_buf = util.create_scratch_buffer('feishu://bitable-detail', 'feishu-bitable-detail')
+  end
+  configure_preview(state)
 
   vim.cmd('wincmd h')
   state.list_win = vim.api.nvim_get_current_win()
@@ -516,13 +630,13 @@ local function build_link_maps(state, exclude_record_id)
   return label_to_id, id_to_label
 end
 
-local function field_value_to_string(state, field, value)
+local function field_value_display(state, field, value)
   local ui_type = tostring(field.ui_type or '')
   if ui_type == 'DateTime' then
-    return extract_date(value)
+    return extract_date(value), {}
   end
   if ui_type == 'User' then
-    return table.concat(extract_people(value), ', ')
+    return table.concat(extract_people(value), ', '), {}
   end
   if ui_type == 'SingleLink' or ui_type == 'DuplexLink' then
     local _, id_to_label = build_link_maps(state, nil)
@@ -530,9 +644,14 @@ local function field_value_to_string(state, field, value)
     for _, record_id in ipairs(extract_link_record_ids(value)) do
       parts[#parts + 1] = id_to_label[record_id] or record_id
     end
-    return table.concat(parts, ', ')
+    return table.concat(parts, ', '), {}
   end
-  return format_rich_value(value)
+  return format_rich_value(value, state.app), extract_links(state.app, value)
+end
+
+local function field_value_to_string(state, field, value)
+  local rendered = field_value_display(state, field, value)
+  return rendered
 end
 
 local function row_values(state, row)
@@ -895,6 +1014,7 @@ local function render_preview(state)
 
   local row = current_row(state)
   if not row then
+    state.preview_line_links = {}
     util.set_lines(state.preview_buf, {
       '多维表格详情',
       '',
@@ -906,7 +1026,18 @@ local function render_preview(state)
   local record = row.record
   local fields = record.fields
   local _, id_to_label = build_link_maps(state, nil)
-  local lines = {
+  state.preview_line_links = {}
+  local lines
+
+  local function append_field_line(field_name, rendered, links)
+    local line = ('%s: %s'):format(field_name, rendered ~= '' and rendered or '-')
+    lines[#lines + 1] = line
+    if links and #links > 0 then
+      state.preview_line_links[#lines] = links[1]
+    end
+  end
+
+  lines = {
     record.label ~= '' and record.label or record.record_id,
     ('record_id: %s'):format(record.record_id),
     ('table: %s'):format(state.active_table_name or state.active_table_id or '<table>'),
@@ -914,11 +1045,14 @@ local function render_preview(state)
   }
 
   local seen = {}
+  local collected_links = {}
+  local seen_links = {}
   for _, field in ipairs(state.schema_fields or {}) do
     local field_name = field.field_name
     if field_name then
       seen[field_name] = true
       local rendered
+      local links = {}
       local value = fields[field_name]
       if field_name == state.parent_field_name then
         local labels = {}
@@ -927,24 +1061,32 @@ local function render_preview(state)
         end
         rendered = table.concat(labels, ', ')
       else
-        rendered = field_value_to_string(state, field, value)
+        rendered, links = field_value_display(state, field, value)
       end
-      lines[#lines + 1] = ('%s: %s'):format(field_name, rendered ~= '' and rendered or '-')
+      append_field_line(field_name, rendered, links)
+      for _, link in ipairs(links or {}) do
+        append_link(collected_links, seen_links, link)
+      end
     end
   end
 
   for field_name, value in pairs(fields) do
     if not seen[field_name] then
-      lines[#lines + 1] = ('%s: %s'):format(field_name, format_rich_value(value))
+      local rendered = format_rich_value(value, state.app)
+      local links = extract_links(state.app, value)
+      append_field_line(field_name, rendered, links)
+      for _, link in ipairs(links or {}) do
+        append_link(collected_links, seen_links, link)
+      end
     end
   end
 
-  local urls = extract_urls(fields)
-  if #urls > 0 then
+  if #collected_links > 0 then
     lines[#lines + 1] = ''
     lines[#lines + 1] = '链接'
-    for index, url in ipairs(urls) do
-      lines[#lines + 1] = ('%d. %s'):format(index, url)
+    for index, link in ipairs(collected_links) do
+      lines[#lines + 1] = ('%d. %s'):format(index, markdown_link(link.label or link.url, link.url))
+      state.preview_line_links[#lines] = link
     end
   end
 
@@ -956,6 +1098,10 @@ local function render_preview(state)
       vim.api.nvim_buf_add_highlight(state.preview_buf, ns, 'Identifier', index - 1, 0, -1)
     elseif line:match('^record_id:') or line:match('^table:') then
       vim.api.nvim_buf_add_highlight(state.preview_buf, ns, 'Comment', index - 1, 0, -1)
+    elseif state.preview_line_links[index] then
+      local colon = line:find(': ', 1, true)
+      local start_col = colon and (colon + 1) or 0
+      vim.api.nvim_buf_add_highlight(state.preview_buf, ns, 'Underlined', index - 1, start_col, -1)
     end
   end
 end
@@ -1380,17 +1526,84 @@ local function delete_current_record(state)
   end)
 end
 
-local function open_current_link(state)
+local function current_preview_link(state)
+  if not state.preview_win or not vim.api.nvim_win_is_valid(state.preview_win) then
+    return nil
+  end
+  if vim.api.nvim_get_current_win() ~= state.preview_win then
+    return nil
+  end
+  local line = vim.api.nvim_win_get_cursor(state.preview_win)[1]
+  return state.preview_line_links and state.preview_line_links[line] or nil
+end
+
+local function first_record_link(state)
   local record = current_record(state)
   if not record then
-    return
+    return nil
   end
-  local urls = extract_urls(record.fields)
-  if #urls == 0 then
+  local links = extract_links(state.app, record.fields)
+  return links[1]
+end
+
+local function open_link_target(state, link)
+  if not link or type(link.url) ~= 'string' or link.url == '' then
     vim.notify('当前记录里没有可打开的链接。', vim.log.levels.WARN)
     return
   end
-  util.open_url(urls[1])
+
+  state.app.backend:resolve_url(link.url, function(payload, err)
+    if err or type(payload) ~= 'table' then
+      util.open_url(link.url)
+      return
+    end
+
+    local entry = {
+      kind = 'bitable_link',
+      name = link.label or payload.title or payload.token or link.url,
+      token = payload.token,
+      node_token = payload.node_token,
+      obj_token = payload.obj_token,
+      type = payload.obj_type or payload.source_type or link.resource_type or 'url',
+      source_type = payload.source_type,
+      url = link.url,
+      source = 'bitable_link',
+      raw = payload.raw,
+    }
+    local target_opts = {
+      target_win = state.preview_win,
+      split = 'right',
+    }
+
+    if entry.type == 'sheet' then
+      require('feishu').open_sheet(entry, target_opts)
+      return
+    end
+    if entry.type == 'slides' or entry.type == 'mindnote' or entry.type == 'file' or entry.type == 'shortcut' then
+      require('feishu').open_resource(entry, target_opts)
+      return
+    end
+    if (entry.kind == 'wiki_node' or entry.type == 'wiki' or entry.source_type == 'wiki')
+        and (entry.type == 'docx' or entry.type == 'doc' or entry.type == 'wiki') then
+      require('feishu').open_document(entry, target_opts)
+      return
+    end
+    if entry.type == 'docx' or entry.type == 'doc' then
+      require('feishu').open_document(entry, target_opts)
+      return
+    end
+    if entry.type == 'bitable' and entry.url and entry.url ~= '' then
+      require('feishu').open_bitable({ base_url = entry.url })
+      return
+    end
+
+    util.open_url(link.url)
+  end)
+end
+
+open_current_link = function(state)
+  local link = current_preview_link(state) or first_record_link(state)
+  open_link_target(state, link)
 end
 
 local function fast_move(state, delta)
@@ -1495,6 +1708,7 @@ function M.open(app, opts)
     last_selected_record_id = nil,
   }
   states[list_buf] = state
+  configure_preview(state)
 
   local map = function(lhs, rhs, desc)
     vim.keymap.set('n', lhs, rhs, { buffer = list_buf, silent = true, nowait = true, desc = desc })
