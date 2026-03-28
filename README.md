@@ -2,18 +2,18 @@
 
 中文 | [English](README_en.md)
 
-> ⚠️AIGC警告：本项目的代码几乎完全由 gpt-5.4 生成，可能存在潜在的bug，虽然现在可以正常运行:)
+> ⚠️说明：本项目的大部分代码由 gpt-5.4 生成，可能仍有未发现的问题。
 
-一个基于 Neovim 的飞书前端，后端统一委托给 `feishu-cli`。
+一个基于 Neovim 的飞书前端，使用 `feishu-cli` 作为后端。
 
 ## 特性
 
 - 在 Neovim 里浏览飞书云文档、知识库、云盘、搜索结果和最近打开内容。
-- 用一个通用的 bitable 视图读写多维表格，支持分组、picker 和链接跳转。
-- 把 `docx` / 可导出的 wiki 文档映射成 Markdown buffer，并在 `:w` 后异步同步回飞书。
+- 用通用的 bitable 视图读写多维表格，支持分组、picker 和链接跳转。
+- 把 `docx` / 可导出的 wiki 文档打开为 Markdown buffer，并在 `:w` 后异步同步回飞书。
 - 浏览聊天、预览历史消息，并在独立 compose buffer 里发送消息。
 - 为 `sheet`、普通文件和暂未原生支持的资源提供 preview / metadata / 下载 fallback。
-- 所有后端能力统一委托给 [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli)，插件本身不重复实现一套飞书 API 客户端。
+- 所有后端能力由 [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli) 提供，插件本身不维护单独的飞书 API 客户端。
 
 ## 依赖
 
@@ -29,13 +29,13 @@
 
 ## 先配置 backend：feishu-cli
 
-`feishu.nvim` 自己不做登录和 token 管理；这部分完全复用 `feishu-cli`。
+登录和 token 管理由 `feishu-cli` 负责。
 
 ### 1. 安装 feishu-cli
 
-推荐直接安装 `chijw/feishu-cli` 的 release 版本。只要最后你的系统里能执行 `feishu-cli` 即可。
+推荐直接安装 `chijw/feishu-cli` 的 release 版本。系统里能执行 `feishu-cli` 即可。
 
-如果你已经装好了，可以先确认：
+已安装的话先确认：
 
 ```bash
 feishu-cli version
@@ -43,7 +43,7 @@ feishu-cli version
 
 ### 2. 配置 `config.yaml`
 
-你可以用环境变量，也可以用配置文件。对日常使用来说，配置文件更稳。
+可以用环境变量，也可以用配置文件。日常使用更推荐配置文件。
 
 先初始化：
 
@@ -81,7 +81,7 @@ import:
 http://127.0.0.1:14530/callback
 ```
 
-如果你更喜欢别的端口，也可以，但要保证两边一致。
+也可以使用其他端口，只要前后保持一致。
 
 ### 4. 登录拿 User Token
 
@@ -89,7 +89,7 @@ http://127.0.0.1:14530/callback
 feishu-cli auth login --port 14530
 ```
 
-如果你在远程机器上跑 Neovim、在本地浏览器里授权，也可以用手动模式：
+如果 Neovim 跑在远程机器上、浏览器开在本地，可以改用手动模式：
 
 ```bash
 feishu-cli auth login --manual --port 14530
@@ -106,7 +106,7 @@ feishu-cli auth token -o json
 
 - `auth login` 默认会请求 `feishu-cli` 的推荐 scope 集，并自动补 `offline_access`
 - 一般不要自己覆盖 scope，除非你明确知道缺了什么
-- 插件里的 `:Feishu login` 本质上也是在调用 `feishu-cli auth login`
+- `:Feishu login` 会在浮动终端里执行 `feishu-cli auth login`
 
 ### 5. 推荐的用户权限范围
 
@@ -123,7 +123,7 @@ feishu-cli auth token -o json
 
 ## 安装插件
 
-这个插件没有编译步骤；本质上就是把仓库加到 runtimepath，并保证 `feishu-cli` 可用。
+这个插件没有编译步骤。把仓库加入 runtimepath，并保证 `feishu-cli` 可用即可。
 
 ### `lazy.nvim` / LazyVim
 
@@ -269,7 +269,7 @@ require("feishu").setup({
   - 给登录过程额外透传参数
 - `:Feishu bitable`
 - `:Feishu tasks`
-  - 兼容别名，本质上仍然是 bitable 视图
+  - 兼容别名，打开的仍然是 bitable 视图
 - `:Feishu chats`
 
 默认快捷键：
@@ -290,16 +290,16 @@ require("feishu").setup({
 
 在 `云文档` 里：
 
-- 可以继续进入知识库、云盘、最近打开、搜索
-- 可以直接打开 `docx` / `wiki` / `sheet` / `bitable`
-- 可以在当前容器里新建文档
-- 可以通过手动输入链接的方式直接解析并打开资源
+- 进入知识库、云盘、最近打开和搜索结果
+- 直接打开 `docx` / `wiki` / `sheet` / `bitable`
+- 在当前容器里新建文档
+- 输入飞书链接后直接解析并打开资源
 
 ### 多维表格
 
-多维表格页面的重点是“按 schema 渲染，而不是按某个固定工作区写死字段”。
+多维表格视图按 schema 渲染，不依赖固定字段名。
 
-当前支持：
+支持的操作：
 
 - 动态列渲染
 - `h / l` 横向滚动
@@ -311,19 +311,19 @@ require("feishu").setup({
 - `d` 删除记录
 - `gd` / `o` 打开当前记录里的链接
 
-记录编辑 buffer 里：
+记录编辑 buffer：
 
-- `Enter` / `i` / `a` / `A` / `I` 都可以进入当前字段编辑
+- `Enter` / `i` / `a` / `A` / `I` 进入当前字段编辑
 - 单选、多选、负责人、关联记录等字段会弹 picker
-- `c` 可以搜索并引用一个已有云文档
-- `gd` / `o` 可以打开当前字段里的第一个 hyperlink
+- `c` 搜索并引用已有云文档
+- `gd` / `o` 打开当前字段里的第一个 hyperlink
 - `:w` 保存当前记录
 
 ### 文档
 
-支持文档本地缓存的资源会以独立 Markdown buffer 打开。
+支持本地缓存的文档会以独立 Markdown buffer 打开。
 
-当前行为：
+可用操作：
 
 - `:w` 保存后异步同步回飞书
 - `gR` 重新导出远端内容到本地缓存
@@ -332,7 +332,7 @@ require("feishu").setup({
 
 ### 消息
 
-消息页当前支持：
+消息页支持：
 
 - chat 列表浏览
 - 历史消息预览
@@ -354,14 +354,14 @@ require("feishu").setup({
 - `sheet`
   - 只读预览
 
-### 目前以 fallback 为主
+### 以 fallback 为主的资源
 
 - `slides`
 - `mindnote`
 - 普通上传文件
 - 其他没有专门原生 buffer 的资源
 
-fallback 策略：
+fallback 方式：
 
 - 能导出为 Markdown 的，优先导成本地缓存
 - 能预览的，优先开一个 metadata / preview buffer
