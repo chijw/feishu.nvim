@@ -292,9 +292,9 @@ local function preview_lines(entry)
   elseif entry.kind == 'wiki_space' or entry.kind == 'wiki_node_dir' then
     lines[#lines + 1] = '这是一个可继续进入的知识空间或节点。'
   elseif (entry.kind == 'wiki_node' or entry.type == 'wiki') and (entry.type == 'docx' or entry.type == 'doc' or entry.type == 'wiki') then
-    lines[#lines + 1] = '导出为本地只读 Markdown 缓存并打开。'
+    lines[#lines + 1] = '导出为本地 Markdown 缓存并打开；docx 保存后会异步同步回远端。'
   elseif entry.type == 'docx' or entry.type == 'doc' then
-    lines[#lines + 1] = '导出为本地只读 Markdown 缓存并打开。'
+    lines[#lines + 1] = '导出为本地 Markdown 缓存并打开；docx 保存后会异步同步回远端。'
   elseif entry.type == 'folder' then
     lines[#lines + 1] = '这是一个文件夹。'
   elseif entry.type == 'bitable' then

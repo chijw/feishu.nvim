@@ -620,6 +620,24 @@ function Backend:wiki_export(target, output_path, assets_dir, callback)
   self:run_external_optional_user(args, {}, callback)
 end
 
+function Backend:import_markdown(file_path, document_id, callback)
+  if type(file_path) ~= 'string' or file_path == '' then
+    callback(nil, { message = 'Missing markdown file path for import.' })
+    return
+  end
+  if type(document_id) ~= 'string' or document_id == '' then
+    callback(nil, { message = 'Missing document_id for markdown import.' })
+    return
+  end
+  self:run_external_optional_user({
+    'doc',
+    'import',
+    file_path,
+    '--document-id',
+    document_id,
+  }, {}, callback)
+end
+
 function Backend:export_markdown(entry, output_path, assets_dir, callback)
   local entry_type = type(entry) == 'table' and entry.type or nil
   local target = type(entry) == 'table' and (entry.url or entry.node_token or entry.token) or nil

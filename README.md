@@ -17,7 +17,8 @@ Native Neovim frontend for Feishu resources, with `feishu-cli` as the primary ba
   - `云文档` shows a generic docs browser with top-level actions plus the current user's visible docs
   - `云文档` supports browse mode plus `s` search mode
   - opening a bitable delegates to the schema-driven bitable view
-  - opening a `docx` / supported `wiki` doc exports it into a local read-only Markdown cache buffer
+  - opening a `docx` / supported `wiki` doc exports it into a local Markdown cache buffer
+  - editable `docx` buffers sync back to Feishu asynchronously on `:w`
 - `:Feishu auth`, `:Feishu login`
   - `:Feishu login` opens a floating terminal and runs `feishu-cli auth login --manual`
   - by default it relies on `feishu-cli`'s own recommended scope set; override `auth.login_scopes` only when you need a custom list
@@ -74,10 +75,12 @@ Strong support:
 Usable with fallback:
 
 - `docx` / `doc`
-  - browser can export/open as a local read-only Markdown cache buffer
+  - browser can export/open as a local Markdown cache buffer
+  - `docx` supports local editing and async sync-back on save
   - if export fails, fall back to the remote URL
 - `wiki` doc nodes
-  - browser can export/open as a local read-only Markdown cache buffer
+  - browser can export/open as a local Markdown cache buffer
+  - wiki nodes that resolve to `docx` support local editing and async sync-back on save
   - wiki containers remain navigable as containers
 - `sheet`
   - browser can detect the type
@@ -93,6 +96,6 @@ Weak or not yet first-class:
 Fallback behavior:
 
 - If a resource has a stable Feishu URL but no native buffer implementation yet, the plugin opens that URL externally.
-- If a resource can be exported as Markdown, the plugin prefers a local read-only cache buffer before falling back to the browser.
+- If a resource can be exported as Markdown, the plugin prefers a local cache buffer before falling back to the browser.
 - If a container returns no visible entries from the API, the buffer stays navigable and simply shows `(empty)`.
 - If a resource type is unsupported for structured editing, keep the task/doc citation in Feishu and edit the body through the official web UI for now.
