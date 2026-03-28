@@ -106,8 +106,7 @@ local function ensure_preview_window(state, force)
       { 'S', '清除当前筛选' },
       { 'h / l', '横向切换可见列' },
       { 'J / K', '快速上下移动' },
-      { 'r', '刷新聊天列表' },
-      { 'q', '关闭消息页' },
+      { 'gR', '刷新聊天列表' },
     }
     if #state.chats == 0 then
       items[2] = nil
@@ -294,8 +293,7 @@ local function help_items(state)
     { 'S', '清除当前筛选' },
     { 'h / l', '横向切换可见列' },
     { 'J / K', '快速上下移动' },
-    { 'r', '刷新聊天列表' },
-    { 'q', '关闭消息页' },
+    { 'gR', '刷新聊天列表' },
   }
   if #state.chats == 0 then
     items[2] = nil
@@ -595,12 +593,7 @@ function M.open(app)
     vim.keymap.set('n', lhs, rhs, { buffer = list_buf, silent = true, nowait = true, desc = desc })
   end
 
-  map('q', function()
-    util.close_window(state.preview_win)
-    util.close_buffer(state.preview_buf)
-    util.close_buffer(list_buf)
-  end, 'Close chats view')
-  map('r', function()
+  map('gR', function()
     refresh(state)
   end, 'Refresh chats')
   map('s', function()

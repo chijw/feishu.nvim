@@ -6,6 +6,7 @@ local M = {}
 local ns = vim.api.nvim_create_namespace('feishu.bitable')
 local states = {}
 local form_states = {}
+local render
 local open_current_link
 local open_link_target
 
@@ -352,6 +353,18 @@ local function split_csv(raw)
   return parts
 end
 
+local function append_text_value(current, addition)
+  local lhs = vim.trim(current or '')
+  local rhs = vim.trim(addition or '')
+  if rhs == '' then
+    return lhs
+  end
+  if lhs == '' then
+    return rhs
+  end
+  return ('%s ; %s'):format(lhs, rhs)
+end
+
 local function parse_primary_field(fields)
   for _, field in ipairs(fields or {}) do
     if field.is_primary and field.field_name then
@@ -474,8 +487,7 @@ local function configure_preview(state)
       { 'i', '编辑当前记录' },
       { 'd', '删除当前记录' },
       { 'o / gd', '打开当前记录中的链接' },
-      { 'r', '刷新当前表' },
-      { 'q', '关闭当前 bitable 页' },
+      { 'gR', '刷新当前表' },
     }
     if state.parent_field_name then
       table.insert(items, 4, { 'a', '在当前组下新增记录' })
@@ -985,6 +997,11 @@ local function picker_capable(field)
       or ui_type == 'DuplexLink'
 end
 
+local function citation_capable(field)
+  local ui_type = tostring(field and field.ui_type or '')
+  return ui_type == 'Text'
+end
+
 local function form_cursor_field(form_state)
   if not vim.api.nvim_win_is_valid(form_state.winid) then
     return nil
@@ -1110,6 +1127,113 @@ local function open_form_picker(form_state)
   })
 end
 
+local function citation_items_from_payload(payload)
+  local items = {}
+  for _, item in ipairs(payload or {}) do
+    local title = tostring(item.Title or item.title or item.name or item.token or '<doc>')
+    local url = tostring(item.URL or item.url or '')
+    if url ~= '' then
+      local docs_type = tostring(item.DocsType or item.docs_type or item.type or 'doc')
+      items[#items + 1] = {
+        label = ('[%s] %s'):format(docs_type:upper(), title),
+        value = {
+          title = title,
+          url = url,
+        },
+      }
+    end
+  end
+  return items
+end
+
+local function citation_items_from_recent(app)
+  local items = {}
+  for _, item in ipairs(app.session and app.session.recent_docs or {}) do
+    if type(item.url) == 'string' and item.url ~= '' then
+      items[#items + 1] = {
+        label = ('[%s] %s'):format(tostring(item.type or 'doc'):upper(), tostring(item.name or item.url)),
+        value = {
+          title = tostring(item.name or item.url),
+          url = tostring(item.url),
+        },
+      }
+    end
+  end
+  return items
+end
+
+local function open_citation_picker(form_state)
+  local field, value, line = form_cursor_field(form_state)
+  if not field then
+    return
+  end
+  if not citation_capable(field) then
+    vim.notify('当前字段不适合插入文档引用。', vim.log.levels.INFO)
+    return
+  end
+
+  vim.ui.input({
+    prompt = '引用云文档搜索: ',
+  }, function(input)
+    if input == nil then
+      return
+    end
+    local query = vim.trim(input)
+    local app = form_state.parent_state.app
+
+    local function open_picker(items, title)
+      if not items or #items == 0 then
+        vim.notify('没有找到可引用的云文档。', vim.log.levels.INFO)
+        return
+      end
+      picker.open({
+        title = title or '选择云文档',
+        items = items,
+        multiple = false,
+        on_confirm = function(values)
+          local selected = values[1]
+          if type(selected) ~= 'table' or type(selected.url) ~= 'string' or selected.url == '' then
+            return
+          end
+          if not vim.api.nvim_win_is_valid(form_state.winid) or not vim.api.nvim_buf_is_valid(form_state.bufnr) then
+            return
+          end
+          vim.api.nvim_set_current_win(form_state.winid)
+          vim.bo[form_state.bufnr].modifiable = true
+          vim.bo[form_state.bufnr].readonly = false
+          local citation = markdown_link(selected.title or selected.url, selected.url)
+          vim.api.nvim_buf_set_lines(form_state.bufnr, line - 1, line, false, {
+            ('%s: %s'):format(field.field_name, append_text_value(value, citation)),
+          })
+          pcall(vim.api.nvim_win_set_cursor, form_state.winid, { line, 0 })
+        end,
+      })
+    end
+
+    if query == '' then
+      open_picker(citation_items_from_recent(app), '最近云文档')
+      return
+    end
+
+    form_state.parent_state.status = ('正在搜索云文档: %s'):format(query)
+    form_state.parent_state.error = nil
+    render(form_state.parent_state)
+    app.backend:search_docs(query, function(payload, err)
+      if err then
+        form_state.parent_state.status = '云文档搜索失败。'
+        form_state.parent_state.error = err
+        render(form_state.parent_state)
+        notify_error(err.message or 'Search docs failed.')
+        return
+      end
+      form_state.parent_state.status = ('已找到 %d 条云文档。'):format(#(payload.items or {}))
+      form_state.parent_state.error = nil
+      render(form_state.parent_state)
+      open_picker(citation_items_from_payload(payload.items), ('搜索结果: %s'):format(query))
+    end)
+  end)
+end
+
 local function enter_insert_for_field(form_state)
   local field, _, line = form_cursor_field(form_state)
   if not field or not vim.api.nvim_win_is_valid(form_state.winid) then
@@ -1143,6 +1267,7 @@ local function form_help_items()
   return {
     { '<CR>', '编辑当前字段' },
     { 'i / I / a / A', '编辑当前字段；选项字段打开 picker' },
+    { 'c', '搜索并引用云文档到当前文本字段' },
     { 'gd / o', '打开当前字段里的首个链接' },
     { ':w', '保存当前记录' },
     { ':wq', '保存并关闭当前窗口' },
@@ -1256,8 +1381,9 @@ local function build_fields_from_form(state, form, opts)
   return fields
 end
 
-local function render_preview(state)
-  if not ensure_preview_window(state) then
+local function render_preview(state, opts)
+  opts = opts or {}
+  if not ensure_preview_window(state, opts.force == true) then
     return
   end
 
@@ -1393,7 +1519,7 @@ local function first_row_record_id(state)
   return nil
 end
 
-local function render(state)
+render = function(state)
   if not vim.api.nvim_buf_is_valid(state.list_buf) then
     return
   end
@@ -1463,7 +1589,7 @@ local function render(state)
   end
   local record = current_record(state)
   state.last_selected_record_id = record and record.record_id or state.last_selected_record_id
-  render_preview(state)
+  render_preview(state, { force = false })
 end
 
 local function help_items(state)
@@ -1476,8 +1602,7 @@ local function help_items(state)
     { 'i', '编辑当前记录' },
     { 'd', '删除当前记录' },
     { 'o / gd', '打开当前记录中的链接' },
-    { 'r', '刷新当前表' },
-    { 'q', '关闭当前 bitable 页' },
+    { 'gR', '刷新当前表' },
   }
   if state.parent_field_name then
     table.insert(items, 4, { 'a', '在当前组下新增记录' })
@@ -1759,6 +1884,9 @@ local function open_form(state, record, parent_record_id, default_values)
   map('A', function()
     edit_current_form_field(form_state)
   end, 'Edit current field')
+  map('c', function()
+    open_citation_picker(form_state)
+  end, 'Cite Feishu doc into current field')
   map('gd', function()
     open_form_current_link(form_state)
   end, 'Open current field link')
@@ -1847,6 +1975,12 @@ open_link_target = function(state, link)
     return
   end
 
+  local target_win = state.list_win
+  if not target_win or not vim.api.nvim_win_is_valid(target_win) then
+    target_win = vim.api.nvim_get_current_win()
+  end
+  collapse_preview_window(state, { disable = true })
+
   state.app.backend:resolve_url(link.url, function(payload, err)
     if err or type(payload) ~= 'table' then
       util.open_url(link.url)
@@ -1866,7 +2000,7 @@ open_link_target = function(state, link)
       raw = payload.raw,
     }
     local target_opts = {
-      split = 'right',
+      target_win = target_win,
     }
 
     if entry.type == 'sheet' then
@@ -1889,7 +2023,7 @@ open_link_target = function(state, link)
     if entry.type == 'bitable' and entry.url and entry.url ~= '' then
       require('feishu').open_bitable({
         base_url = entry.url,
-        split = 'right',
+        target_win = target_win,
       })
       return
     end
@@ -1940,7 +2074,7 @@ local function on_cursor_moved(buf)
   if row and row.record then
     state.last_selected_record_id = row.record.record_id
   end
-  render_preview(state)
+  render_preview(state, { force = false })
 end
 
 function M.refresh_current()
@@ -2022,12 +2156,7 @@ function M.open(app, opts)
     vim.keymap.set('n', lhs, rhs, { buffer = list_buf, silent = true, nowait = true, desc = desc })
   end
 
-  map('q', function()
-    util.close_window(state.preview_win)
-    util.close_buffer(state.preview_buf)
-    util.close_buffer(list_buf)
-  end, 'Close bitable view')
-  map('r', function()
+  map('gR', function()
     refresh(state)
   end, 'Refresh bitable')
   map('h', function()
@@ -2052,7 +2181,7 @@ function M.open(app, opts)
   end)
   map('<CR>', function()
     state.preview_enabled = true
-    render_preview(state)
+    render_preview(state, { force = true })
   end, 'Restore detail preview')
   map('<S-Tab>', function()
     cycle_table(state)
@@ -2092,7 +2221,6 @@ function M.open(app, opts)
     buffer = list_buf,
     callback = function()
       state.list_win = vim.api.nvim_get_current_win()
-      ensure_preview_window(state, false)
       render(state)
     end,
   })

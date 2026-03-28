@@ -379,10 +379,6 @@ function M.open(app, entry, opts)
     vim.keymap.set('n', lhs, rhs, { buffer = buf, silent = true, nowait = true, desc = desc })
   end
 
-  map('q', function()
-    util.close_window(state.winid)
-    util.close_buffer(buf)
-  end, 'Close sheet view')
   map('gR', function()
     refresh(state)
   end, 'Refresh sheet preview')

@@ -364,8 +364,9 @@ local function collapse_preview_window(state, opts)
   end
 end
 
-local function render_preview(state)
-  if not ensure_preview_window(state) then
+local function render_preview(state, opts)
+  opts = opts or {}
+  if not ensure_preview_window(state, opts.force == true) then
     return
   end
   local entry = current_entry(state)
@@ -431,15 +432,14 @@ local function render(state)
     vim.api.nvim_buf_add_highlight(state.list_buf, ns, hls.name or 'Normal', item.line - 1, name_start, -1)
   end
 
-  render_preview(state)
+  render_preview(state, { force = false })
 end
 
 help_items = function(state)
   local items = {
     { 'l / <CR>', '打开或进入当前条目' },
     { 'h', '返回上一级' },
-    { 'r', '刷新当前页面' },
-    { 'q', '关闭当前浏览页' },
+    { 'gR', '刷新当前页面' },
   }
   local current = current_page(state)
   if current and (current.kind == 'docs_home' or current.kind == 'docs_search') then
@@ -1110,42 +1110,45 @@ open_entry = function(state, entry)
   if entry.type == 'bitable' and entry.url and entry.url ~= '' then
     remember_recent_doc(state, entry)
     hand_off_to_new_view(state)
-    require('feishu').open_tasks({ base_url = entry.url })
+    require('feishu').open_tasks({
+      base_url = entry.url,
+      target_win = state.list_win,
+    })
     return
   end
 
   if entry.type == 'sheet' then
     remember_recent_doc(state, entry)
+    hand_off_to_new_view(state)
     require('feishu').open_sheet(entry, {
-      target_win = state.preview_win,
-      split = 'right',
+      target_win = state.list_win,
     })
     return
   end
 
   if entry.type == 'slides' or entry.type == 'mindnote' or entry.type == 'file' or entry.type == 'shortcut' then
     remember_recent_doc(state, entry)
+    hand_off_to_new_view(state)
     require('feishu').open_resource(entry, {
-      target_win = state.preview_win,
-      split = 'right',
+      target_win = state.list_win,
     })
     return
   end
 
   if (entry.kind == 'wiki_node' or entry.type == 'wiki' or entry.source_type == 'wiki') and (entry.type == 'docx' or entry.type == 'doc' or entry.type == 'wiki') then
     remember_recent_doc(state, entry)
+    hand_off_to_new_view(state)
     require('feishu').open_document(entry, {
-      target_win = state.preview_win,
-      split = 'right',
+      target_win = state.list_win,
     })
     return
   end
 
   if entry.type == 'docx' or entry.type == 'doc' then
     remember_recent_doc(state, entry)
+    hand_off_to_new_view(state)
     require('feishu').open_document(entry, {
-      target_win = state.preview_win,
-      split = 'right',
+      target_win = state.list_win,
     })
     return
   end
@@ -1215,12 +1218,7 @@ function M.open(app)
     vim.keymap.set('n', lhs, rhs, { buffer = list_buf, silent = true, nowait = true, desc = desc })
   end
 
-  map('q', function()
-    util.close_window(state.preview_win)
-    util.close_buffer(state.preview_buf)
-    util.close_buffer(list_buf)
-  end, 'Close browser')
-  map('r', function()
+  map('gR', function()
     refresh(state)
   end, 'Refresh browser')
   map('h', function()
@@ -1270,7 +1268,6 @@ function M.open(app)
     buffer = list_buf,
     callback = function()
       state.list_win = vim.api.nvim_get_current_win()
-      ensure_preview_window(state, false)
       render(state)
     end,
   })

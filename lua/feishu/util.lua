@@ -486,7 +486,6 @@ function M.open_centered_float(lines, opts)
     M.close_buffer(buf)
   end
 
-  vim.keymap.set('n', 'q', close, { buffer = buf, silent = true, nowait = true, desc = 'Close float' })
   vim.keymap.set('n', '<Esc>', close, { buffer = buf, silent = true, nowait = true, desc = 'Close float' })
 
   return buf, win
@@ -505,7 +504,7 @@ function M.open_help_float(title, items, opts)
     lines[#lines + 1] = M.pad(item[1] or '', key_width) .. '  ' .. (item[2] or '')
   end
   lines[#lines + 1] = ''
-  lines[#lines + 1] = 'q / <Esc> 关闭'
+  lines[#lines + 1] = '<Esc> 关闭'
 
   local buf, win = M.open_centered_float(lines, vim.tbl_extend('force', {
     name = 'feishu://help',
@@ -590,7 +589,6 @@ function M.open_terminal_float(cmd, opts)
     M.close_buffer(buf)
   end
 
-  vim.keymap.set('n', 'q', close, { buffer = buf, silent = true, nowait = true, desc = 'Close float terminal' })
   vim.keymap.set('n', '<Esc>', close, { buffer = buf, silent = true, nowait = true, desc = 'Close float terminal' })
   vim.keymap.set('t', '<Esc><Esc>', [[<C-\><C-n>]], { buffer = buf, silent = true, desc = 'Exit terminal mode' })
 

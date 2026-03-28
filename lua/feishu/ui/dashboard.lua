@@ -7,11 +7,10 @@ local states = {}
 
 local function help_items()
   return {
-    { 'r', '刷新当前认证状态' },
+    { 'gR', '刷新当前认证状态' },
     { 't', '打开默认多维表格' },
     { 'c', '打开消息页' },
     { 'l', '打开登录浮窗' },
-    { 'q', '关闭当前页' },
   }
 end
 
@@ -95,8 +94,7 @@ local function render(state)
   lines[#lines + 1] = '  t  tasks'
   lines[#lines + 1] = '  c  chats'
   lines[#lines + 1] = '  l  login'
-  lines[#lines + 1] = '  r  refresh auth'
-  lines[#lines + 1] = '  q  close'
+  lines[#lines + 1] = '  gR  refresh auth'
 
   util.set_lines(state.bufnr, lines)
 
@@ -161,10 +159,7 @@ function M.open(app)
     vim.keymap.set('n', lhs, rhs, { buffer = buf, silent = true, nowait = true, desc = desc })
   end
 
-  map('q', function()
-    util.close_buffer(buf)
-  end, 'Close dashboard')
-  map('r', function()
+  map('gR', function()
     refresh(state)
   end, 'Refresh auth')
   map('t', function()

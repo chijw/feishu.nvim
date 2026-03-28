@@ -16,7 +16,7 @@ local function help_items(state)
     { '<CR>', '确认当前项' },
     { 'j / k', '上下移动' },
     { 'gg / G', '跳到首项或末项' },
-    { 'q / <Esc>', '关闭选择窗' },
+    { 'h / <Esc>', '关闭选择窗' },
   }
   if state.multiple then
     table.insert(items, 2, { '<Space>', '切换当前项' })
