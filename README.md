@@ -1,17 +1,16 @@
 # feishu.nvim
 
-中文版本 | [English Version](README_en.md)
+中文 | [English](README_en.md)
 
-一个基于 Neovim buffer 的飞书前端，后端统一委托给 `feishu-cli`。
+> ⚠️AIGC警告：本项目的代码几乎完全由 gpt-5.4 生成，可能存在潜在的bug，虽然现在可以正常运行:)
 
-它的目标不是在 Neovim 里再塞一个伪 TUI，而是把飞书里的常见资源直接映射成正常的 buffer / window / picker，让你继续用原生 Vim 工作流操作云文档、消息和多维表格。
+一个基于 Neovim 的飞书前端，后端统一委托给 `feishu-cli`。
 
 ## 特性
 
 - 云文档浏览器
   - 根页面只有两个入口：`云文档` 和 `消息`
   - 支持知识库、云盘、最近打开、搜索结果等通用资源浏览
-  - 文档打开后是独立 buffer，不会把浏览页和内容页强耦合在一起
 - 多维表格原生视图
   - 根据 schema 动态渲染列，不写死字段名
   - 支持横向滚动、切换 table、按字段分组、记录预览
