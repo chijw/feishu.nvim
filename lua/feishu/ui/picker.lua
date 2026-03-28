@@ -153,6 +153,7 @@ function M.open(opts)
     name = 'feishu://picker',
     filetype = 'feishu-picker',
     min_width = math.max(32, width + 8),
+    min_height = math.max(6, math.min(#items + 4, math.floor(vim.o.lines * 0.5))),
     max_width_ratio = 0.55,
     max_height = math.max(8, math.min(#items + 4, math.floor(vim.o.lines * 0.7))),
     cursorline = true,

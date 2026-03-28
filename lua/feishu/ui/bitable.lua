@@ -448,13 +448,13 @@ local function configure_preview(state)
       { '<CR>', '重新打开右侧详情预览' },
       { 'i', '编辑当前记录' },
       { 'd', '删除当前记录' },
-      { 'o', '打开当前记录中的第一个链接' },
+      { 'o / gd', '打开当前记录中的链接' },
       { 'r', '刷新当前表' },
       { 'q', '关闭当前 bitable 页' },
     }
     if state.parent_field_name then
       table.insert(items, 4, { 'a', '在当前组下新增记录' })
-      table.insert(items, 5, { 'A', '新增顶层记录' })
+      table.insert(items, 5, { 'A', '新增顶层记录（父记录为空）' })
     else
       table.insert(items, 4, { 'a / A', '新增记录' })
     end
@@ -469,6 +469,9 @@ local function configure_preview(state)
   vim.keymap.set('n', '<CR>', function()
     open_current_link(state)
   end, { buffer = state.preview_buf, silent = true, nowait = true, desc = 'Open link under cursor' })
+  vim.keymap.set('n', 'gd', function()
+    open_current_link(state)
+  end, { buffer = state.preview_buf, silent = true, nowait = true, desc = 'Go to Feishu link under cursor' })
 end
 
 local function ensure_preview_window(state)
@@ -952,7 +955,11 @@ local function build_fields_from_form(state, form, opts)
     end
 
     if raw == '' then
-      if for_update then
+      if ui_type == 'SingleLink' or ui_type == 'DuplexLink' then
+        if for_update then
+          fields[field_name] = {}
+        end
+      elseif for_update then
         fields[field_name] = vim.NIL
       end
     elseif ui_type == 'Text' then
@@ -1013,7 +1020,10 @@ local function build_fields_from_form(state, form, opts)
       for _, item in ipairs(split_csv(raw)) do
         ids[#ids + 1] = link_label_to_id[item] or item
       end
-      fields[field_name] = { link_record_ids = ids }
+      if ui_type == 'SingleLink' and #ids > 1 then
+        return nil, ('%s only accepts one parent record.'):format(field_name)
+      end
+      fields[field_name] = ids
     else
       return nil, ('Unsupported editable field type for %s: %s'):format(field_name, ui_type)
     end
@@ -1207,13 +1217,13 @@ local function help_items(state)
     { '<CR>', '重新打开右侧详情预览' },
     { 'i', '编辑当前记录' },
     { 'd', '删除当前记录' },
-    { 'o', '打开当前记录中的第一个链接' },
+    { 'o / gd', '打开当前记录中的链接' },
     { 'r', '刷新当前表' },
     { 'q', '关闭当前 bitable 页' },
   }
   if state.parent_field_name then
     table.insert(items, 4, { 'a', '在当前组下新增记录' })
-    table.insert(items, 5, { 'A', '新增顶层记录' })
+    table.insert(items, 5, { 'A', '新增顶层记录（父记录为空）' })
   else
     table.insert(items, 4, { 'a / A', '新增记录' })
   end
@@ -1356,7 +1366,8 @@ end
 local function save_form(form_state, opts)
   opts = opts or {}
   if form_state.pending then
-    return false
+    vim.notify('当前记录正在保存，请稍等。', vim.log.levels.INFO)
+    return true
   end
 
   local form, parse_error = parse_form(form_state.parent_state, form_state.bufnr)
@@ -1375,23 +1386,25 @@ local function save_form(form_state, opts)
   end
 
   form_state.pending = true
-  vim.bo[form_state.bufnr].modifiable = false
-  vim.bo[form_state.bufnr].readonly = true
+  local save_tick = vim.api.nvim_buf_get_changedtick(form_state.bufnr)
+  form_state.last_save_tick = save_tick
+  vim.bo[form_state.bufnr].modified = false
   form_state.parent_state.status = '正在保存记录...'
   render(form_state.parent_state)
-  local done = false
-  local ok = false
 
   local callback = function(payload, err)
     form_state.pending = false
+    local buf_valid = vim.api.nvim_buf_is_valid(form_state.bufnr)
+    local current_tick = buf_valid and vim.api.nvim_buf_get_changedtick(form_state.bufnr) or nil
+    local unchanged_since_save = buf_valid and current_tick == save_tick
     if err then
-      vim.bo[form_state.bufnr].modifiable = true
-      vim.bo[form_state.bufnr].readonly = false
+      if unchanged_since_save then
+        vim.bo[form_state.bufnr].modified = true
+      end
       form_state.parent_state.status = '保存失败。'
       form_state.parent_state.error = err
       render(form_state.parent_state)
       notify_error(err.message or 'Save failed.')
-      done = true
       return
     end
 
@@ -1399,37 +1412,24 @@ local function save_form(form_state, opts)
     if saved_record_id then
       form_state.record_id = saved_record_id
     end
-    ok = true
-    vim.bo[form_state.bufnr].modifiable = true
-    vim.bo[form_state.bufnr].readonly = false
-    vim.bo[form_state.bufnr].modified = false
+    if unchanged_since_save then
+      vim.bo[form_state.bufnr].modified = false
+    end
     form_state.parent_state.status = '记录已保存。'
     form_state.parent_state.error = nil
     refresh_table_data(form_state.parent_state)
-    done = true
+    if buf_valid then
+      pcall(vim.api.nvim_exec_autocmds, 'BufWritePost', {
+        buffer = form_state.bufnr,
+        modeline = false,
+      })
+    end
   end
 
   if form_state.record_id then
     form_state.parent_state.app.backend:record_update(current_base_url(form_state.parent_state), form_state.record_id, fields, callback)
   else
     form_state.parent_state.app.backend:record_add(current_base_url(form_state.parent_state), fields, callback)
-  end
-
-  if opts.blocking then
-    local finished = vim.wait(opts.timeout_ms or 30000, function()
-      return done
-    end, 50)
-    if not finished then
-      form_state.pending = false
-      vim.bo[form_state.bufnr].modifiable = true
-      vim.bo[form_state.bufnr].readonly = false
-      form_state.parent_state.status = '保存超时。'
-      form_state.parent_state.error = { message = 'Timed out while saving the record.' }
-      render(form_state.parent_state)
-      notify_error('Timed out while saving the record.')
-      return false
-    end
-    return ok
   end
 
   return true
@@ -1496,7 +1496,7 @@ local function open_form(state, record, parent_record_id)
     group = group,
     buffer = buf,
     callback = function()
-      save_form(form_state, { blocking = true })
+      save_form(form_state)
     end,
   })
   vim.api.nvim_create_autocmd('BufWipeout', {
