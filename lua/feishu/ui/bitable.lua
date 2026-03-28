@@ -120,6 +120,17 @@ local function tenant_host(app)
   return 'feishu.cn'
 end
 
+local function base_token_from_url(base_url)
+  if type(base_url) ~= 'string' then
+    return 'unknown'
+  end
+  return base_url:match('/base/([^/?]+)') or 'unknown'
+end
+
+local function bitable_view_name(base_url)
+  return ('feishu://bitable/%s'):format(base_token_from_url(base_url))
+end
+
 local function mention_resource_type(item)
   local raw = tostring(item.realMentionType or item.mentionType or ''):lower()
   local aliases = {
@@ -1566,12 +1577,11 @@ local function open_link_target(state, link)
       obj_token = payload.obj_token,
       type = payload.obj_type or payload.source_type or link.resource_type or 'url',
       source_type = payload.source_type,
-      url = link.url,
+      url = payload.url or link.url,
       source = 'bitable_link',
       raw = payload.raw,
     }
     local target_opts = {
-      target_win = state.preview_win,
       split = 'right',
     }
 
@@ -1593,7 +1603,10 @@ local function open_link_target(state, link)
       return
     end
     if entry.type == 'bitable' and entry.url and entry.url ~= '' then
-      require('feishu').open_bitable({ base_url = entry.url })
+      require('feishu').open_bitable({
+        base_url = entry.url,
+        split = 'right',
+      })
       return
     end
 
@@ -1661,11 +1674,22 @@ function M.open(app, opts)
     return
   end
 
-  local list_win = vim.api.nvim_get_current_win()
-  local list_buf = util.create_scratch_buffer('feishu://bitable', 'feishu-bitable')
+  local list_win = opts.target_win
+  if not list_win or not vim.api.nvim_win_is_valid(list_win) then
+    if opts.split == 'right' then
+      vim.cmd('botright vsplit')
+      list_win = vim.api.nvim_get_current_win()
+    else
+      list_win = vim.api.nvim_get_current_win()
+    end
+  end
+  local list_buf = util.create_view_buffer(bitable_view_name(base_url), 'feishu-bitable', {
+    bufhidden = 'hide',
+  })
   vim.api.nvim_win_set_buf(list_win, list_buf)
   util.configure_selection_window(list_win, list_buf, { wrap = false })
 
+  vim.api.nvim_set_current_win(list_win)
   vim.cmd('botright vsplit')
   local preview_win = vim.api.nvim_get_current_win()
   local preview_buf = util.create_scratch_buffer('feishu://bitable-detail', 'feishu-bitable-detail')
@@ -1675,8 +1699,7 @@ function M.open(app, opts)
   vim.wo[preview_win].wrap = true
   pcall(vim.api.nvim_win_set_width, preview_win, math.max(42, math.floor(vim.o.columns * (app.opts.ui.preview_width or 0.42))))
 
-  vim.cmd('wincmd h')
-  list_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_set_current_win(list_win)
 
   local state = {
     app = app,

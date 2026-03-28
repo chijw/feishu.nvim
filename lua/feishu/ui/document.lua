@@ -29,6 +29,11 @@ local function resource_label(entry)
   return entry.name or entry.title or entry.token or entry.url or '<document>'
 end
 
+local function document_view_name(entry, document_id)
+  local token = document_id or entry.node_token or entry.token or entry.obj_token or resource_label(entry)
+  return ('feishu://document/%s'):format(slug(token))
+end
+
 local function cache_root(app)
   local root = app.opts.cache_dir
   if type(root) ~= 'string' or root == '' then
@@ -347,13 +352,15 @@ function M.open(app, entry, opts)
       win = vim.api.nvim_get_current_win()
     end
   end
-  local buf = util.create_scratch_buffer('feishu://document-loading', 'markdown')
+  local document_id = document_id_for_entry(entry)
+  local buf = util.create_view_buffer(document_view_name(entry, document_id), 'markdown', {
+    bufhidden = 'hide',
+  })
   vim.api.nvim_win_set_buf(win, buf)
   vim.wo[win].number = false
   vim.wo[win].relativenumber = false
   vim.wo[win].wrap = true
 
-  local document_id = document_id_for_entry(entry)
   local state = {
     app = app,
     entry = entry,

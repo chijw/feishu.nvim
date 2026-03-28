@@ -137,7 +137,9 @@ function M.refresh_current()
 end
 
 function M.open(app)
-  local buf = util.create_scratch_buffer('feishu://dashboard', 'feishu-dashboard')
+  local buf = util.create_view_buffer('feishu://dashboard', 'feishu-dashboard', {
+    bufhidden = 'hide',
+  })
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(win, buf)
   vim.wo[win].number = false

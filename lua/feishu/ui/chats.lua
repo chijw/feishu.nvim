@@ -539,7 +539,9 @@ end
 
 function M.open(app)
   local list_win = vim.api.nvim_get_current_win()
-  local list_buf = util.create_scratch_buffer('feishu://chats', 'feishu-chats')
+  local list_buf = util.create_view_buffer('feishu://chats', 'feishu-chats', {
+    bufhidden = 'hide',
+  })
   vim.api.nvim_win_set_buf(list_win, list_buf)
   util.configure_selection_window(list_win, list_buf, { wrap = false })
 
@@ -552,8 +554,7 @@ function M.open(app)
   vim.wo[preview_win].wrap = true
   pcall(vim.api.nvim_win_set_width, preview_win, math.max(42, math.floor(vim.o.columns * (app.opts.ui.preview_width or 0.42))))
 
-  vim.cmd('wincmd h')
-  list_win = vim.api.nvim_get_current_win()
+  vim.api.nvim_set_current_win(list_win)
 
   local state = {
     app = app,

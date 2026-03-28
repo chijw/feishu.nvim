@@ -30,6 +30,10 @@ local function sheet_token_for_entry(entry)
   return nil
 end
 
+local function sheet_view_name(spreadsheet_token)
+  return ('feishu://sheet/%s'):format(spreadsheet_token or 'unknown')
+end
+
 local function column_label(index)
   local parts = {}
   local current = index
@@ -346,7 +350,9 @@ function M.open(app, entry, opts)
     end
   end
 
-  local buf = util.create_scratch_buffer('feishu://sheet', 'feishu-sheet')
+  local buf = util.create_view_buffer(sheet_view_name(spreadsheet_token), 'feishu-sheet', {
+    bufhidden = 'hide',
+  })
   vim.api.nvim_win_set_buf(win, buf)
   util.configure_selection_window(win, buf, { wrap = false })
 

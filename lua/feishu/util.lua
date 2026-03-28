@@ -2,6 +2,23 @@ local M = {}
 local float_ns = vim.api.nvim_create_namespace('feishu.float')
 local saved_guicursor = nil
 
+local function set_unique_name(buf, name)
+  if not name or name == '' then
+    return
+  end
+  local candidate = name
+  local suffix = 2
+  while true do
+    local existing = vim.fn.bufnr(candidate)
+    if existing <= 0 or existing == buf then
+      break
+    end
+    candidate = ('%s#%d'):format(name, suffix)
+    suffix = suffix + 1
+  end
+  pcall(vim.api.nvim_buf_set_name, buf, candidate)
+end
+
 function M.display_width(text)
   return vim.fn.strdisplaywidth(text or '')
 end
@@ -45,9 +62,21 @@ function M.create_scratch_buffer(name, filetype, opts)
   vim.bo[buf].modifiable = false
   vim.bo[buf].readonly = true
   vim.bo[buf].filetype = filetype or 'text'
-  if name and name ~= '' then
-    pcall(vim.api.nvim_buf_set_name, buf, name)
-  end
+  set_unique_name(buf, name)
+  return buf
+end
+
+function M.create_view_buffer(name, filetype, opts)
+  opts = opts or {}
+  local buf = vim.api.nvim_create_buf(opts.listed ~= false, false)
+  vim.bo[buf].buftype = opts.buftype or ''
+  vim.bo[buf].bufhidden = opts.bufhidden or 'hide'
+  vim.bo[buf].swapfile = false
+  vim.bo[buf].modifiable = opts.modifiable == true
+  vim.bo[buf].readonly = not vim.bo[buf].modifiable
+  vim.bo[buf].modified = false
+  vim.bo[buf].filetype = filetype or 'text'
+  set_unique_name(buf, name)
   return buf
 end
 
@@ -61,6 +90,9 @@ function M.set_lines(buf, lines, opts)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = opts.modifiable == true
   vim.bo[buf].readonly = not vim.bo[buf].modifiable
+  if opts.clear_modified ~= false then
+    vim.bo[buf].modified = opts.modified == true
+  end
 end
 
 function M.close_window(win)

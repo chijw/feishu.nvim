@@ -272,7 +272,9 @@ function M.open_resource(entry, opts)
 end
 
 function M.show_json(title, payload)
-  local buf = util.create_scratch_buffer(('feishu://%s'):format(title), 'json')
+  local buf = util.create_view_buffer(('feishu://%s'):format(title), 'json', {
+    bufhidden = 'hide',
+  })
   local win = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_buf(win, buf)
   util.set_lines(buf, vim.split(vim.json.encode(payload), '\n'))

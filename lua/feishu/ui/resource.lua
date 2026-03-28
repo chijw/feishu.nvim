@@ -119,6 +119,15 @@ local function cache_path(app, entry)
   return dir .. '/' .. filename
 end
 
+local function resource_view_name(entry)
+  local kind = entry_type(entry)
+  if kind == '' then
+    kind = 'resource'
+  end
+  local token = entry.token or entry.obj_token or entry.node_token or resource_label(entry)
+  return ('feishu://resource/%s/%s'):format(kind, slug(token))
+end
+
 local function format_timestamp(raw)
   if raw == nil then
     return nil
@@ -426,7 +435,9 @@ function M.open(app, entry, opts)
     end
   end
 
-  local buf = util.create_scratch_buffer('feishu://resource', 'yaml')
+  local buf = util.create_view_buffer(resource_view_name(entry), 'yaml', {
+    bufhidden = 'hide',
+  })
   vim.api.nvim_win_set_buf(win, buf)
   vim.wo[win].number = false
   vim.wo[win].relativenumber = false
