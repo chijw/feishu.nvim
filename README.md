@@ -1,120 +1,446 @@
 # feishu.nvim
 
-Native Neovim frontend for Feishu resources, with `feishu-cli` as the backend.
+一个基于 Neovim buffer 的飞书前端，后端统一委托给 `feishu-cli`。
 
-## Goals
+它的目标不是在 Neovim 里再塞一个伪 TUI，而是把飞书里的常见资源直接映射成正常的 buffer / window / picker，让你继续用原生 Vim 工作流操作云文档、消息和多维表格。
 
-- Use `feishu-cli` for general Feishu resources whenever possible.
-- Use `feishu-cli` as the primary backend for docs, chat, and bitable operations.
-- Use real Neovim buffers and splits instead of an embedded pseudo-TUI.
-- Make task and chat workflows usable with normal vim motions, search, macros, and editing.
+## 特性
 
-## Current Features
+- 云文档浏览器
+  - 根页面只有两个入口：`云文档` 和 `消息`
+  - 支持知识库、云盘、最近打开、搜索结果等通用资源浏览
+  - 文档打开后是独立 buffer，不会把浏览页和内容页强耦合在一起
+- 多维表格原生视图
+  - 根据 schema 动态渲染列，不写死字段名
+  - 支持横向滚动、切换 table、按字段分组、记录预览
+  - 支持新增、编辑、删除记录
+  - 单选、多选、负责人、布尔、关联记录等字段会走 picker，不要求手输
+  - 表单里支持引用云文档、打开 hyperlink、异步保存
+- 文档本地缓存
+  - `docx` / 可导出的 wiki 文档会落到本地 Markdown 缓存
+  - `:w` 保存后异步同步回飞书
+  - 继续保留正常的 Vim 编辑、搜索、宏、buffer 管理能力
+- 消息视图
+  - 浏览 chat 列表
+  - 预览历史消息
+  - 用独立 compose buffer 写消息并通过 `:w` 发送
+- 资源 fallback
+  - `sheet` 会打开只读预览
+  - `slides` / `mindnote` / 普通文件等暂不原生编辑的资源，会打开 metadata buffer
+  - 普通文件支持下载到本地缓存后继续用本地工具打开
+- 全部请求走外部 backend
+  - 插件本身不维护一套独立的飞书 HTTP 客户端
+  - 当前支持的 backend 是 [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli)
 
-- `:Feishu`, `<leader>vf`
-  - opens a browser-style root buffer
-  - root entries are `云文档` and `消息`
-  - `云文档` shows a generic docs browser with top-level actions plus the current user's visible docs
-  - `云文档` supports browse mode plus `s` search mode
-  - opening a bitable delegates to the schema-driven bitable view
-  - opening a `docx` / supported `wiki` doc exports it into a local Markdown cache buffer
-  - editable `docx` buffers sync back to Feishu asynchronously on `:w`
-- `:Feishu auth`, `:Feishu login`
-  - `:Feishu login` opens a floating terminal and runs `feishu-cli auth login --manual`
-  - by default it relies on `feishu-cli`'s own recommended scope set; override `auth.login_scopes` only when you need a custom list
-  - extra auth-login flags can be passed through, for example `:Feishu login --port 14530`
-- `:Feishu tasks`, `:Feishu bitable`
-  - opens the generic bitable buffer
-  - `:Feishu tasks` is now just a compatibility alias for `:Feishu bitable`
-  - derives primary field / visible columns / editable fields from schema
-  - uses a self-link field as a tree automatically when present
-  - adaptive columns with `h/l`
-  - table cycling with `Shift-Tab`
-  - record create/edit/delete/open-link
-  - editable form buffer with `i` / `<CR>` field editing
-  - option-like fields such as single-select, multi-select, user, checkbox, and link fields open a picker instead of requiring manual text entry
-  - `Ctrl-S` save and `Ctrl-C` cancel
+## 依赖
+
+- Neovim `0.10+`
+  - 插件依赖 Lua API、floating window、`vim.system()` 等现代接口
+- `feishu-cli`
+  - 推荐使用 [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli)
+  - 二进制名仍然是 `feishu-cli`
+  - 必须能在 `PATH` 里找到，或者在 `setup()` 里通过 `external_cmd` 指定绝对路径
+- 一个已配置好的飞书开放平台应用
+  - 需要 `App ID` 和 `App Secret`
+  - 需要在应用里配置 OAuth 重定向地址
+
+## 先配置 backend：feishu-cli
+
+`feishu.nvim` 自己不做登录和 token 管理；这部分完全复用 `feishu-cli`。
+
+### 1. 安装 feishu-cli
+
+推荐直接安装 `chijw/feishu-cli` 的 release 版本。只要最后你的系统里能执行 `feishu-cli` 即可。
+
+如果你已经装好了，可以先确认：
+
+```bash
+feishu-cli version
+```
+
+### 2. 配置 `config.yaml`
+
+你可以用环境变量，也可以用配置文件。对日常使用来说，配置文件更稳。
+
+先初始化：
+
+```bash
+feishu-cli config init
+```
+
+然后编辑 `~/.feishu-cli/config.yaml`：
+
+```yaml
+app_id: "cli_xxx"
+app_secret: "xxx"
+base_url: "https://open.feishu.cn"
+owner_email: ""
+transfer_ownership: false
+debug: false
+
+export:
+  download_images: true
+  assets_dir: "./assets"
+
+import:
+  upload_images: true
+```
+
+至少要把 `app_id` 和 `app_secret` 填好。
+
+### 3. 配置飞书开放平台重定向 URL
+
+在飞书开放平台里给你的应用添加 OAuth 重定向 URL。这个地址必须和你之后登录时用的端口一致。
+
+例如：
+
+```text
+http://127.0.0.1:14530/callback
+```
+
+如果你更喜欢别的端口，也可以，但要保证两边一致。
+
+### 4. 登录拿 User Token
+
+```bash
+feishu-cli auth login --port 14530
+```
+
+如果你在远程机器上跑 Neovim、在本地浏览器里授权，也可以用手动模式：
+
+```bash
+feishu-cli auth login --manual --port 14530
+```
+
+完成后建议检查一下：
+
+```bash
+feishu-cli auth status -o json
+feishu-cli auth token -o json
+```
+
+说明：
+
+- `auth login` 默认会请求 `feishu-cli` 的推荐 scope 集，并自动补 `offline_access`
+- 一般不要自己覆盖 scope，除非你明确知道缺了什么
+- 插件里的 `:Feishu login` 本质上也是在调用 `feishu-cli auth login`
+
+### 5. 推荐的用户权限范围
+
+如果你希望插件里的 `云文档` / `消息` / `多维表格` 都能正常工作，User OAuth 至少应覆盖这类能力：
+
+- 文档搜索：`search:docs:read`
+- 知识库浏览：`wiki:space:retrieve` 或 `wiki:wiki:readonly`
+- 文档导出/编辑：`docx:document`
+- 多维表格：`bitable:app`
+- IM：`im:*`
+- 自动刷新登录态：`offline_access`
+
+如果你直接使用 `feishu-cli auth login` 默认推荐 scope，通常不需要自己逐个手填。
+
+## 安装插件
+
+这个插件没有编译步骤；本质上就是把仓库加到 runtimepath，并保证 `feishu-cli` 可用。
+
+### `lazy.nvim` / LazyVim
+
+```lua
+{
+  "chijw/feishu.nvim",
+  config = function()
+    require("feishu").setup({
+      workspace = vim.fn.getcwd(),
+      default_bitable_url = nil,
+      auth = {
+        redirect_port = 14530,
+      },
+    })
+  end,
+}
+```
+
+### Neovim 原生 `packages`
+
+```bash
+git clone git@github.com:chijw/feishu.nvim.git \
+  ~/.local/share/nvim/site/pack/feishu/start/feishu.nvim
+```
+
+然后在你的配置里：
+
+```lua
+require("feishu").setup({})
+```
+
+### `vim-plug`（仅限 Neovim）
+
+```vim
+Plug 'chijw/feishu.nvim'
+```
+
+```lua
+require("feishu").setup({})
+```
+
+`feishu.nvim` 是 Neovim-only 插件，不支持传统 Vim。
+
+## 配置
+
+最小配置：
+
+```lua
+require("feishu").setup({
+  workspace = vim.fn.getcwd(),
+  auth = {
+    redirect_port = 14530,
+  },
+})
+```
+
+一个更完整的例子：
+
+```lua
+require("feishu").setup({
+  workspace = "/path/to/your/workspace",
+  tenant_host = "xcnpgx5jojlc.feishu.cn",
+  default_bitable_url = "https://xxx.feishu.cn/base/xxxx?table=tblxxx&view=vewxxx",
+
+  auth = {
+    redirect_port = 14530,
+    login_scopes = nil,
+  },
+
+  keymaps = {
+    browser = "<leader>vf",
+    dashboard = "",
+    tasks = "",
+    chats = "",
+  },
+
+  ui = {
+    preview_width = 0.42,
+    form_height = 0.40,
+    compose_height = 0.32,
+  },
+
+  external_cmd = { "feishu-cli" },
+  -- external_cmd = { "/absolute/path/to/feishu-cli" },
+})
+```
+
+### 可用配置项
+
+- `workspace`
+  - 工作区根目录
+  - 插件会在这里查找 `workspace.json`
+- `tenant_host`
+  - 飞书域名，部分链接解析会用到
+- `default_bitable_url`
+  - 默认打开的多维表格 URL
+- `auth.redirect_port`
+  - `:Feishu login` 默认使用的 OAuth 回调端口
+- `auth.login_scopes`
+  - 可选，自定义登录 scope；一般建议留空，直接用 `feishu-cli` 默认推荐值
+- `keymaps.browser`
+  - 默认是 `<leader>vf`
+- `ui.preview_width`
+  - 右侧 preview 宽度比例
+- `ui.form_height`
+  - 多维表格记录编辑窗口高度比例
+- `ui.compose_height`
+  - 消息编辑窗口高度比例
+- `external_cmd`
+  - 外部 backend 命令，默认是 `{ "feishu-cli" }`
+- `cache_dir`
+  - 可选，自定义本地缓存目录
+
+### `workspace.json`
+
+如果你不想把某些 workspace 相关配置写死在全局 `init.lua` 里，也可以在项目目录放一个 `workspace.json`：
+
+```json
+{
+  "default_bitable_url": "https://xxx.feishu.cn/base/xxxx?table=tblxxx&view=vewxxx",
+  "tenant_host": "xcnpgx5jojlc.feishu.cn",
+  "auth": {
+    "redirect_port": 14530
+  }
+}
+```
+
+插件会自动读取这些默认值。
+
+## 命令
+
+创建命令后，主入口是 `:Feishu`。
+
+- `:Feishu`
+- `:Feishu browse`
+  - 打开根浏览页
+- `:Feishu dashboard`
+- `:Feishu auth`
+  - 打开登录状态页
+- `:Feishu login`
+  - 打开一个 floating terminal，执行 `feishu-cli auth login --manual`
+- `:Feishu login --port 14530`
+  - 给登录过程额外透传参数
+- `:Feishu bitable`
+- `:Feishu tasks`
+  - 兼容别名，本质上仍然是 bitable 视图
 - `:Feishu chats`
-  - chat list view
-  - history preview via `Enter`
-  - compose buffer via `i`
-  - send via `Ctrl-S`
-  - local filter via `s`, clear via `S`
-- unsupported resources
-  - open into a metadata-oriented resource buffer instead of forcing an immediate browser jump
-  - resource buffers can fetch live `file meta` / `file stats` data when the Feishu API exposes them
-  - generic uploaded files support `o` to download into the local cache; text-like files reopen inside Neovim, binary files fall back to the system opener
 
-## Install In This Workspace
+默认快捷键：
 
-The local config already wires it through `lazy.nvim`:
+- `<leader>vf`
+  - 打开飞书根浏览页
+- `<leader>vh`
+  - 在当前 Feishu buffer 里打开快捷键帮助浮窗
 
-- plugin dir: `~/workspace/dev/feishu.nvim`
-- lazy spec: `~/.config/nvim/lua/plugins/feishu.lua`
+## 使用方式
 
-## Notes
+### 云文档
 
-- The plugin intentionally shells out to CLIs instead of duplicating HTTP logic in Lua.
-- The plugin now uses `feishu-cli` as its only backend.
-- The default bitable entry can come from `default_bitable_url` in plugin config or `default_bitable_url` / legacy `task_board_url` in `workspace.json`.
-- Bitable URLs can be opened either from direct `/base/...` links or from wiki nodes that resolve to bitable resources.
-- Chat listing and history require real `im:*` user scopes on the `feishu-cli` token.
-- Search and chat commands rely on `feishu-cli`'s own user-token resolution path, so token refresh stays in the CLI instead of the plugin.
-- Optional-user commands still fall back to `~/.feishu-cli/token.json` when the installed `feishu-cli` binary does not yet expose `auth token`.
-- Cloud-doc search needs the external `feishu-cli` token to include `search:docs:read`. Without it, browse mode still works but search mode will surface the permission error.
-- Wiki-space browsing is best with `wiki:space:retrieve` or `wiki:wiki:readonly`. If they are missing, the docs page now degrades to recent-doc/manual-open mode instead of failing the whole buffer.
-- Drive-root browsing needs user scopes such as `drive:drive:readonly` or `space:document:retrieve`. If they are missing, the browser should surface the permission error instead of showing a fake empty drive.
-- Resource fallback buffers use `feishu-cli file meta`, `file stats`, and `file download` directly, so runtime behavior stays aligned with the external CLI instead of duplicating Feishu HTTP logic inside the plugin.
+`<leader>vf` 进入根页面后，`Enter` 或 `l` 可以继续进入：
 
-## Resource Support
+- `云文档`
+- `消息`
 
-Strong support:
+在 `云文档` 里：
+
+- 可以继续进入知识库、云盘、最近打开、搜索
+- 可以直接打开 `docx` / `wiki` / `sheet` / `bitable`
+- 可以在当前容器里新建文档
+- 可以通过手动输入链接的方式直接解析并打开资源
+
+### 多维表格
+
+多维表格页面的重点是“按 schema 渲染，而不是按某个固定工作区写死字段”。
+
+当前支持：
+
+- 动态列渲染
+- `h / l` 横向滚动
+- `J / K` 快速移动
+- `<S-Tab>` 切换同一个 base 内的 table
+- `gr` 选择分组字段
+- `a` / `A` 新增记录
+- `i` 编辑记录
+- `d` 删除记录
+- `gd` / `o` 打开当前记录里的链接
+
+记录编辑 buffer 里：
+
+- `Enter` / `i` / `a` / `A` / `I` 都可以进入当前字段编辑
+- 单选、多选、负责人、关联记录等字段会弹 picker
+- `c` 可以搜索并引用一个已有云文档
+- `gd` / `o` 可以打开当前字段里的第一个 hyperlink
+- `:w` 保存当前记录
+
+### 文档
+
+支持文档本地缓存的资源会以独立 Markdown buffer 打开。
+
+当前行为：
+
+- `:w` 保存后异步同步回飞书
+- `gR` 重新导出远端内容到本地缓存
+- `gS` 手动触发一次同步
+- `gx` 打开远端页面
+
+### 消息
+
+消息页当前支持：
+
+- chat 列表浏览
+- 历史消息预览
+- `i` 打开发送窗口
+- `:w` 发送消息
+- `s` / `S` 做本地筛选
+
+## 资源支持情况
+
+### 原生支持较好
 
 - `bitable`
-  - open into the schema-driven bitable view
-  - supports generic read/write/delete for editable field types
-- `sheet`
-  - opens into a local read-only worksheet preview buffer
-  - supports worksheet switching plus horizontal column scrolling
-- `slides` / `mindnote` / generic `file`
-  - open into a local metadata buffer instead of forcing an immediate browser jump
-  - metadata buffers fetch live file metadata when supported by the API
-  - keep `gx` as the escape hatch to the full remote UI
-- generic uploaded `file`
-  - supports `o` to download into the local cache directory
-  - text-like files reopen as read-only buffers inside Neovim
-  - other files fall back to the OS-level opener after download
+  - 读写、删除、分组、表单 picker、文档引用、hyperlink 跳转
+- `docx` / 可解析 wiki 文档
+  - 本地 Markdown 缓存
+  - `:w` 异步回写
 - `chat`
-  - list chats, preview history, compose/send text messages
-  - multi-line message bodies are normalized into real buffer lines in the preview split
-- `wiki` nodes that resolve to `bitable`
-  - open into the same generic bitable view
-
-Usable with fallback:
-
-- `docx` / `doc`
-  - browser can export/open as a local Markdown cache buffer
-  - `docx` supports local editing and async sync-back on save
-  - if export fails, fall back to the remote URL
-- `wiki` doc nodes
-  - browser can export/open as a local Markdown cache buffer
-  - wiki nodes that resolve to `docx` support local editing and async sync-back on save
-  - wiki containers remain navigable as containers
+  - 浏览、预览、发送
 - `sheet`
-  - browser can detect the type
-  - browser can open a read-only local preview of the first visible rows/columns
+  - 只读预览
 
-Weak or not yet first-class:
+### 目前以 fallback 为主
 
 - `slides`
 - `mindnote`
-- binary attachments
+- 普通上传文件
+- 其他没有专门原生 buffer 的资源
 
-Fallback behavior:
+fallback 策略：
 
-- If a resource has a stable Feishu URL but no native buffer implementation yet, the plugin opens that URL externally.
-- If a resource can be shown as a metadata buffer, the plugin prefers that buffer before falling back to the browser.
-- If a resource can be exported as Markdown, the plugin prefers a local cache buffer before falling back to the browser.
-- If a generic uploaded file can be downloaded locally, the plugin prefers a local cached copy and only hands off to the OS opener for non-text formats.
-- If a container returns no visible entries from the API, the buffer stays navigable and simply shows `(empty)`.
-- If a resource type is unsupported for structured editing, keep the task/doc citation in Feishu and edit the body through the official web UI for now.
+- 能导出为 Markdown 的，优先导成本地缓存
+- 能预览的，优先开一个 metadata / preview buffer
+- 普通文件可下载到本地缓存
+- 实在不适合本地处理的，保留 `gx` 直接跳官方页面
+
+## 常见问题
+
+### 1. `:Feishu` 能打开，但 `云文档` 里是空的
+
+通常是 scope 不够，不是插件崩了。优先检查：
+
+```bash
+feishu-cli auth status -o json
+```
+
+重点看这些 scope：
+
+- `search:docs:read`
+- `wiki:space:retrieve` 或 `wiki:wiki:readonly`
+- `docx:document`
+
+缺什么就重新登录。
+
+### 2. `消息` 页面打不开或读不到聊天记录
+
+先看 OAuth token 里是否真的有 `im:*` 相关用户权限。很多“看起来授权了”的情况，最后实际 token scope 并不完整。
+
+### 3. `:Feishu login` 报重定向 URL 错误
+
+说明飞书开放平台里配置的 redirect URL 和你实际使用的端口不一致。比如：
+
+- 平台里写的是 `http://127.0.0.1:14530/callback`
+- 你登录时也必须使用 `--port 14530`
+
+### 4. 找不到 `feishu-cli`
+
+如果 backend 不在 `PATH`，就在 `setup()` 里显式指定：
+
+```lua
+require("feishu").setup({
+  external_cmd = { "/absolute/path/to/feishu-cli" },
+})
+```
+
+## 设计原则
+
+- 不在 Lua 里重复实现一整套飞书 API 客户端
+- 所有交互尽量回归原生 Neovim buffer / window / `:w`
+- 避免 workspace-specific hardcode
+- 优先做“可维护的通用能力”，再考虑特殊工作流
+
+## 当前 backend 约定
+
+这个插件当前按 [`chijw/feishu-cli`](https://github.com/chijw/feishu-cli) 的命令与 JSON 输出进行开发和验证。
+
+如果你换成别的 `feishu-cli` 变体，请至少保证这些能力存在且输出兼容：
+
+- `auth login`
+- `auth status -o json`
+- `auth token -o json`
+- 文档导出 / 导入
+- bitable 表 / 字段 / 记录操作
+- chat 列表 / 历史 / 发送
+- wiki / drive / search / file metadata 相关命令
